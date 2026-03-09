@@ -795,28 +795,39 @@ function ProductsPage({ products }) {
       const priceIdx = header.findIndex(h => h.includes("単価") || h.includes("価格") || h.toLowerCase() === "price");
       const notesIdx = header.findIndex(h => h.includes("備考") || h.toLowerCase() === "notes");
       if (nameIdx === -1) { alert("「商品名」列が見つかりません"); setImporting(false); return; }
+      if (codeIdx === -1) { alert("「コード」列が見つかりません"); setImporting(false); return; }
       const rows = lines.slice(1);
+      // 既存商品をコードでマップ化
+      const existingByCode = {};
+      products.forEach(p => { if (p.code) existingByCode[p.code] = p; });
       const batch = writeBatch(db);
-      let count = 0;
+      let addCount = 0, updateCount = 0;
       for (const line of rows) {
         const cols = line.match(/(".*?"|[^,]*),?/g)?.map(c => c.replace(/,$/,"").replace(/^["']|["']$/g,"").trim()) || [];
         const name = cols[nameIdx];
-        if (!name) continue;
-        const ref = doc(collection(db, "products"));
-        batch.set(ref, {
+        const code = codeIdx >= 0 ? (cols[codeIdx] || "") : "";
+        if (!name || !code) continue;
+        const data = {
           name,
-          code: codeIdx >= 0 ? (cols[codeIdx] || "") : "",
+          code,
           jan: janIdx >= 0 ? (cols[janIdx] || "") : "",
           unit: "",
           price: priceIdx >= 0 ? (Number(cols[priceIdx]) || 0) : 0,
           notes: notesIdx >= 0 ? (cols[notesIdx] || "") : "",
-          createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-        });
-        count++;
+        };
+        const existing = existingByCode[code];
+        if (existing) {
+          batch.update(doc(db, "products", existing.id), data);
+          updateCount++;
+        } else {
+          const ref = doc(collection(db, "products"));
+          batch.set(ref, { ...data, createdAt: serverTimestamp() });
+          addCount++;
+        }
       }
       await batch.commit();
-      alert(`${count}件の商品をインポートしました`);
+      alert(`新規 ${addCount}件、上書き ${updateCount}件 インポートしました`);
     } catch (err) {
       alert("CSVの読み込みに失敗しました: " + err.message);
     }
