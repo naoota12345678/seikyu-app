@@ -767,24 +767,73 @@ function ClientsPage({ clients }) {
 
 // ── Products ──────────────────────────────────────────────────────────────────
 function ProductsPage({ products }) {
-  const [form, setForm] = useState({ name:"",code:"",unit:"",price:"",notes:"" });
+  const [form, setForm] = useState({ name:"",code:"",jan:"",unit:"",price:"",notes:"" });
   const [editing, setEditing] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [importing, setImporting] = useState(false);
   const setF = (k,v) => setForm(f => ({...f,[k]:v}));
   const save = async () => {
     if (!form.name) return alert("商品名を入力してください");
     const data = { ...form, price: Number(form.price)||0, updatedAt: serverTimestamp() };
     if (editing) await updateDoc(doc(db,"products",editing.id),data);
     else { data.createdAt = serverTimestamp(); await addDoc(collection(db,"products"),data); }
-    setShowForm(false); setEditing(null); setForm({name:"",code:"",unit:"",price:"",notes:""});
+    setShowForm(false); setEditing(null); setForm({name:"",code:"",jan:"",unit:"",price:"",notes:""});
   };
   const edit = (p) => { setForm({...p,price:String(p.price)}); setEditing(p); setShowForm(true); };
   const del = async (id) => { if (confirm("削除しますか？")) await deleteDoc(doc(db,"products",id)); };
+  const handleCSV = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    try {
+      const text = await file.text();
+      const lines = text.split(/\r?\n/).filter(l => l.trim());
+      const header = lines[0].split(",").map(h => h.trim().replace(/^["']|["']$/g, ""));
+      const nameIdx = header.findIndex(h => h.includes("商品名") || h.toLowerCase() === "name");
+      const codeIdx = header.findIndex(h => h.includes("コード") || h.toLowerCase() === "code");
+      const janIdx = header.findIndex(h => h.includes("JAN") || h.toLowerCase() === "jan");
+      const priceIdx = header.findIndex(h => h.includes("単価") || h.includes("価格") || h.toLowerCase() === "price");
+      const notesIdx = header.findIndex(h => h.includes("備考") || h.toLowerCase() === "notes");
+      if (nameIdx === -1) { alert("「商品名」列が見つかりません"); setImporting(false); return; }
+      const rows = lines.slice(1);
+      const batch = writeBatch(db);
+      let count = 0;
+      for (const line of rows) {
+        const cols = line.match(/(".*?"|[^,]*),?/g)?.map(c => c.replace(/,$/,"").replace(/^["']|["']$/g,"").trim()) || [];
+        const name = cols[nameIdx];
+        if (!name) continue;
+        const ref = doc(collection(db, "products"));
+        batch.set(ref, {
+          name,
+          code: codeIdx >= 0 ? (cols[codeIdx] || "") : "",
+          jan: janIdx >= 0 ? (cols[janIdx] || "") : "",
+          unit: "",
+          price: priceIdx >= 0 ? (Number(cols[priceIdx]) || 0) : 0,
+          notes: notesIdx >= 0 ? (cols[notesIdx] || "") : "",
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        count++;
+      }
+      await batch.commit();
+      alert(`${count}件の商品をインポートしました`);
+    } catch (err) {
+      alert("CSVの読み込みに失敗しました: " + err.message);
+    }
+    setImporting(false);
+    e.target.value = "";
+  };
   return (
     <div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
         <div style={s.pageTitle}>商品マスタ</div>
-        <button style={s.btn("primary")} onClick={()=>{setEditing(null);setForm({name:"",code:"",unit:"",price:"",notes:""});setShowForm(true);}}>＋ 追加</button>
+        <div style={{display:"flex",gap:8}}>
+          <label style={{...s.btn("gold"),display:"inline-block",cursor:importing?"wait":"pointer",opacity:importing?0.6:1}}>
+            {importing ? "インポート中..." : "CSV インポート"}
+            <input type="file" accept=".csv" style={{display:"none"}} onChange={handleCSV} disabled={importing} />
+          </label>
+          <button style={s.btn("primary")} onClick={()=>{setEditing(null);setForm({name:"",code:"",jan:"",unit:"",price:"",notes:""});setShowForm(true);}}>＋ 追加</button>
+        </div>
       </div>
       {showForm && (
         <div style={s.card}>
@@ -792,6 +841,7 @@ function ProductsPage({ products }) {
           <div style={{...s.row,marginBottom:12}}>
             <div style={s.col}><span style={s.label}>商品名 *</span><input style={s.input} value={form.name} onChange={e=>setF("name",e.target.value)} /></div>
             <div style={s.col}><span style={s.label}>コード</span><input style={s.input} value={form.code} onChange={e=>setF("code",e.target.value)} /></div>
+            <div style={s.col}><span style={s.label}>JAN</span><input style={s.input} value={form.jan||""} onChange={e=>setF("jan",e.target.value)} /></div>
             <div style={s.col}><span style={s.label}>単位</span><input style={{...s.input,width:80}} value={form.unit} onChange={e=>setF("unit",e.target.value)} placeholder="袋" /></div>
             <div style={s.col}><span style={s.label}>標準単価</span><input style={{...s.input,width:120}} type="number" value={form.price} onChange={e=>setF("price",e.target.value)} /></div>
             <div style={s.col}><span style={s.label}>備考</span><input style={{...s.input,minWidth:200}} value={form.notes} onChange={e=>setF("notes",e.target.value)} /></div>
@@ -804,11 +854,11 @@ function ProductsPage({ products }) {
       )}
       <div style={s.card}>
         <table style={s.table}>
-          <thead><tr><th style={s.th}>商品名</th><th style={s.th}>コード</th><th style={s.th}>単位</th><th style={s.th}>標準単価</th><th style={s.th}>備考</th><th style={s.th}>操作</th></tr></thead>
+          <thead><tr><th style={s.th}>商品名</th><th style={s.th}>コード</th><th style={s.th}>JAN</th><th style={s.th}>単位</th><th style={s.th}>標準単価</th><th style={s.th}>備考</th><th style={s.th}>操作</th></tr></thead>
           <tbody>
             {products.map(p => (
               <tr key={p.id}>
-                <td style={s.td}>{p.name}</td><td style={s.td}>{p.code}</td>
+                <td style={s.td}>{p.name}</td><td style={s.td}>{p.code}</td><td style={s.td}>{p.jan||""}</td>
                 <td style={s.td}>{p.unit}</td><td style={s.td}>¥{fmt(p.price)}</td><td style={s.td}>{p.notes}</td>
                 <td style={s.td}>
                   <div style={{display:"flex",gap:6}}>
