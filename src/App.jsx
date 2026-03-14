@@ -1963,6 +1963,10 @@ function BalancePage({ clients, invoices, balances, company }) {
   const [filter, setFilter] = useState("all"); // all | overdue | hasBalance
   const [stripeTarget, setStripeTarget] = useState(null);
   const [stripeSending, setStripeSending] = useState(false);
+  const [reRequestTarget, setReRequestTarget] = useState(null);
+  const [reRequestMenu, setReRequestMenu] = useState(null);
+  const [emailSending, setEmailSending] = useState(false);
+  const [reRequestMsg, setReRequestMsg] = useState("");
   const total = Object.values(balances).reduce((a, b) => a + (b.currentBalance || 0), 0);
 
   // 1ヶ月以上未入金の請求書を検出
@@ -2039,8 +2043,22 @@ function BalancePage({ clients, invoices, balances, company }) {
                 <td style={s.td}>{client.daysSinceOldest > 0 ? <span style={{ color: client.daysSinceOldest > 60 ? C.red : client.daysSinceOldest > 30 ? "#856404" : C.gray, fontWeight: 700 }}>{client.daysSinceOldest}日</span> : "—"}</td>
                 <td style={{...s.td,whiteSpace:"nowrap"}}>
                   <button style={{ ...s.btn("gold"), padding: "4px 10px", fontSize: 12 }} onClick={() => setBalTarget({ client, balance: client.bal })}>入金記録</button>
-                  {client.isOverdue && company?.stripeSecretKey && (
-                    <button style={{ ...s.btn("primary"), padding: "4px 10px", fontSize: 12, marginLeft: 6, background: "#635BFF" }} onClick={() => setStripeTarget(client)}>Stripe再請求</button>
+                  {client.isOverdue && (
+                    <span style={{ position: "relative", display: "inline-block", marginLeft: 6 }}>
+                      <button style={{ ...s.btn("primary"), padding: "4px 10px", fontSize: 12, background: C.red }} onClick={() => setReRequestMenu(reRequestMenu === client.id ? null : client.id)}>再請求 ▼</button>
+                      {reRequestMenu === client.id && (
+                        <div style={{ position: "absolute", top: "100%", right: 0, background: "white", border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.15)", zIndex: 100, minWidth: 180, marginTop: 4 }}>
+                          <button style={{ display: "block", width: "100%", padding: "10px 16px", border: "none", background: "none", textAlign: "left", cursor: "pointer", fontSize: 13, color: C.navy }} onMouseOver={e=>e.target.style.background="#f0f0f0"} onMouseOut={e=>e.target.style.background="none"} onClick={() => { setReRequestMenu(null); setReRequestTarget(client); }}>
+                            ✉ メールで再請求<br/><span style={{ fontSize: 11, color: C.gray }}>手数料なし・督促メール送信</span>
+                          </button>
+                          {company?.stripeSecretKey && (
+                            <button style={{ display: "block", width: "100%", padding: "10px 16px", border: "none", borderTop: `1px solid ${C.border}`, background: "none", textAlign: "left", cursor: "pointer", fontSize: 13, color: "#635BFF" }} onMouseOver={e=>e.target.style.background="#f0f0f0"} onMouseOut={e=>e.target.style.background="none"} onClick={() => { setReRequestMenu(null); setStripeTarget(client); }}>
+                              💳 Stripeで請求<br/><span style={{ fontSize: 11, color: C.gray }}>オンライン決済リンク・手数料3.6%</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </span>
                   )}
                 </td>
               </tr>
@@ -2049,6 +2067,80 @@ function BalancePage({ clients, invoices, balances, company }) {
         </table>
       </div>
       {balTarget && <BalanceModal client={balTarget.client} balance={balTarget.balance} onClose={() => setBalTarget(null)} />}
+      {reRequestTarget && (() => {
+        const cl = reRequestTarget;
+        const clOverdue = invoices.filter(i => i.status === "unpaid" && i.clientId === cl.id);
+        const overdueTotal = clOverdue.reduce((a, i) => a + (i.total || 0), 0);
+        const docNos = clOverdue.map(i => i.docNo).join(", ");
+        const defaultMsg = `${cl.name} 御中\n\nいつもお世話になっております。\n下記の請求につきまして、お支払い期日を過ぎておりますのでご確認をお願いいたします。\n\n対象請求: ${docNos}\n未入金額: ¥${fmt(overdueTotal)}\n\nお忙しいところ恐れ入りますが、ご確認のほどよろしくお願いいたします。`;
+        if (!reRequestMsg) setTimeout(() => setReRequestMsg(defaultMsg), 0);
+        const msg = reRequestMsg || defaultMsg;
+        const sendEmailReRequest = async () => {
+          if (!cl.email) return alert("取引先のメールアドレスが設定されていません");
+          if (!confirm(`${cl.name}（${cl.email}）にお支払いのお願いメールを送信します。`)) return;
+          setEmailSending(true);
+          try {
+            const htmlBody = msg.replace(/\n/g, "<br/>");
+            const res = await fetch("/api/send-invoice", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                to: cl.email,
+                subject: `【お支払いのお願い】${docNos}`,
+                html: htmlBody,
+              }),
+            });
+            const data = await res.json();
+            if (data.success) {
+              await addDoc(collection(db, "sendHistory"), {
+                docNo: docNos, invoiceId: clOverdue.map(i => i.id).join(","), clientId: cl.id,
+                clientName: cl.name, email: cl.email, method: "mail",
+                memo: `再請求メール ¥${fmt(overdueTotal)}`,
+                amount: overdueTotal, sentAt: serverTimestamp(), sentBy: "re-request",
+              });
+              alert("再請求メールを送信しました");
+              { setReRequestTarget(null); setReRequestMsg(""); };
+            } else {
+              alert("送信エラー: " + (data.error || "不明なエラー"));
+            }
+          } catch (e) { alert("エラー: " + e.message); }
+          setEmailSending(false);
+        };
+        return (
+          <div style={s.overlay} onClick={() => { if (!emailSending) { setReRequestTarget(null); setReRequestMsg(""); } }}>
+            <div style={{ ...s.modal, maxWidth: 560 }} onClick={e => e.stopPropagation()}>
+              <h3 style={{ margin: "0 0 16px", color: C.navy }}>メールで再請求</h3>
+              <div style={{ background: "#f8f9fa", borderRadius: 8, padding: 16, marginBottom: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>{cl.name}</div>
+                <div style={{ fontSize: 13, color: C.gray, marginBottom: 4 }}>送信先: {cl.email || <span style={{ color: C.red }}>未設定</span>}</div>
+                <div style={{ fontSize: 13, color: C.gray }}>未入金: {clOverdue.length}件 / ¥{fmt(overdueTotal)}</div>
+              </div>
+              <table style={{ ...s.table, marginBottom: 16 }}>
+                <thead><tr><th style={s.th}>請求番号</th><th style={s.th}>日付</th><th style={s.th}>金額</th></tr></thead>
+                <tbody>
+                  {clOverdue.map(inv => (
+                    <tr key={inv.id}>
+                      <td style={s.td}>{inv.docNo}</td>
+                      <td style={s.td}>{inv.date}</td>
+                      <td style={{ ...s.td, textAlign: "right", fontWeight: 700 }}>¥{fmt(inv.total || 0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div style={{ marginBottom: 16 }}>
+                <span style={{ ...s.label, marginBottom: 6, display: "block" }}>メール本文</span>
+                <textarea style={{ ...s.input, width: "100%", minHeight: 160, fontFamily: "inherit", lineHeight: 1.6 }} value={msg} onChange={e => setReRequestMsg(e.target.value)} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
+                <button style={s.btn("light")} onClick={() => { setReRequestTarget(null); setReRequestMsg(""); }} disabled={emailSending}>キャンセル</button>
+                <button style={s.btn("primary")} onClick={sendEmailReRequest} disabled={emailSending || !cl.email}>
+                  {emailSending ? "送信中..." : "再請求メールを送信"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       {stripeTarget && (() => {
         const cl = stripeTarget;
         const clOverdue = invoices.filter(i => i.status === "unpaid" && i.clientId === cl.id);
