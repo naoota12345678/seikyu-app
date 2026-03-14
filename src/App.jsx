@@ -1241,12 +1241,31 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
     setSending(true);
     setResult(null);
     try {
+      // 既存のPDF URLを取得
+      let pdfUrl = "";
+      try {
+        const pdfSnap = await getDocs(query(collection(db, "pdfHistory"), orderBy("createdAt", "desc")));
+        const pdfDoc = pdfSnap.docs.find(d => d.data().docNo === invoice.docNo);
+        if (pdfDoc) pdfUrl = pdfDoc.data().storageUrl || "";
+      } catch (e) { console.warn("PDF URL取得スキップ:", e.message); }
+      // PDFがなければ生成して保存
+      if (!pdfUrl) {
+        try {
+          const invoiceHTML = buildInvoiceHTML(invoice, [cl], co);
+          const safeName = (cl.name||"").replace(/[\\/:*?"<>|]/g,"_");
+          const { blob, filename } = await generatePDF(invoiceHTML, `請求書_${safeName}_${invoice.docNo}.pdf`);
+          const storagePath = `pdfs/invoices/${invoice.docNo}.pdf`;
+          pdfUrl = await savePDFToStorage(blob, storagePath);
+        } catch (e) { console.warn("PDF生成スキップ:", e.message); }
+      }
+      const pdfLink = pdfUrl ? `<p style="margin:20px 0"><a href="${pdfUrl}" style="display:inline-block;padding:12px 24px;background:#1C2B4A;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold">📄 請求書PDFをダウンロード</a></p>` : "";
+
       if (needApproval) {
         await addDoc(collection(db, "pendingBillings"), {
           type: "re-request-email",
           clientId: invoice.clientId, clientName: cl.name || "", email: cl.email,
           invoiceDocNo: invoice.docNo, invoiceIds: [invoice.id],
-          total: invoice.total || 0,
+          total: invoice.total || 0, pdfUrl,
           message: `${cl.name} 御中\n\nいつもお世話になっております。\n${co.name || ""}です。\n\n${message}\n\n請求番号：${invoice.docNo}\n金額：¥${Number(invoice.total||0).toLocaleString()}\n支払期限：${invoice.dueDate || "—"}`,
           status: "pending", createdAt: serverTimestamp(),
         });
@@ -1262,6 +1281,7 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
               <p>${cl.name} 御中</p>
               <p>いつもお世話になっております。<br>${co.name || ""}です。</p>
               <p style="white-space:pre-line">${message.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</p>
+              ${pdfLink}
               <div style="background:#f4f1ec;padding:14px 18px;border-radius:8px;margin:16px 0">
                 <strong>請求番号：</strong>${invoice.docNo}<br>
                 <strong>金額：</strong>&yen;${Number(invoice.total||0).toLocaleString()}<br>
@@ -3675,8 +3695,10 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
       } else {
         // メール送信
         if (p.type === "re-request-email" || p.type === "re-request-stripe") {
-          // 再請求系
-          const htmlBody = (p.message || `${cl.name} 御中\n\nお支払い期日を過ぎておりますのでご確認をお願いいたします。\n\n対象: ${p.invoiceDocNo}\n金額: ¥${fmt(p.total)}`).replace(/\n/g, "<br/>");
+          // 再請求系（PDFリンク付き）
+          const pdfLink = p.pdfUrl ? `<p style="margin:20px 0"><a href="${p.pdfUrl}" style="display:inline-block;padding:12px 24px;background:#1C2B4A;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold">📄 請求書PDFをダウンロード</a></p>` : "";
+          const msgHtml = (p.message || `${cl.name} 御中\n\nお支払い期日を過ぎておりますのでご確認をお願いいたします。\n\n対象: ${p.invoiceDocNo}\n金額: ¥${fmt(p.total)}`).replace(/\n/g, "<br/>");
+          const htmlBody = msgHtml + pdfLink;
           await fetch("/api/send-invoice", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ to: email, subject: `【お支払いのお願い】${p.invoiceDocNo}`, html: htmlBody }),
