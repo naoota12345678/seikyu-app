@@ -16,8 +16,8 @@ export default async function handler(req, res) {
 
   const { action, email, password, displayName, role, uid, callerUid } = req.body;
 
-  // 呼び出し元がadminか確認
-  if (callerUid) {
+  // 呼び出し元がadminか確認（initは初回セットアップなのでスキップ）
+  if (callerUid && action !== "init") {
     const callerDoc = await adminDb.collection("users").doc(callerUid).get();
     if (!callerDoc.exists || callerDoc.data().role !== "admin") {
       return res.status(403).json({ error: "管理者権限が必要です" });
