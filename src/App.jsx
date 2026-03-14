@@ -578,7 +578,8 @@ function BalanceModal({ client, balance, onClose, invoices }) {
       lastPaidDate: date, lastPaidAmount: n,
       updatedAt: serverTimestamp(),
     });
-    // 入金額で未払い請求書を古い順にpaidにする
+    // 入金履歴を保存
+    const paidInvIds = [];
     if (invoices) {
       const unpaid = invoices
         .filter(i => i.clientId === client.id && i.status === "unpaid")
@@ -588,10 +589,17 @@ function BalanceModal({ client, balance, onClose, invoices }) {
         if (remaining <= 0) break;
         if (remaining >= (inv.total || 0)) {
           await updateDoc(doc(db, "invoices", inv.id), { status: "paid", paidAt: date });
+          paidInvIds.push(inv.docNo);
           remaining -= (inv.total || 0);
         }
       }
     }
+    await addDoc(collection(db, "paymentHistory"), {
+      clientId: client.id, clientName: client.name || "",
+      amount: n, date, prevBalance: prev, newBalance,
+      paidInvoices: paidInvIds,
+      createdAt: serverTimestamp(),
+    });
     onClose();
   };
   return (
@@ -1362,13 +1370,22 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
   });
   const totalBal = Object.values(balances).reduce((a, b) => a + (b.currentBalance || 0), 0);
   const markPaid = async (inv) => {
+    const client = clients.find(c => c.id === inv.clientId);
     await updateDoc(doc(db, "invoices", inv.id), { status: "paid", paidAt: today() });
     const bal = balances[inv.clientId] || {};
+    const prev = bal.currentBalance || 0;
+    const newBal = Math.max(0, prev - inv.total);
     await setDoc(doc(db, "clientBalances", inv.clientId), {
-      clientId: inv.clientId, prevBalance: bal.currentBalance || 0,
-      currentBalance: Math.max(0, (bal.currentBalance || 0) - inv.total),
+      clientId: inv.clientId, prevBalance: prev,
+      currentBalance: newBal,
       paidAmount: (bal.paidAmount || 0) + inv.total,
       lastPaidDate: today(), lastPaidAmount: inv.total, updatedAt: serverTimestamp(),
+    });
+    await addDoc(collection(db, "paymentHistory"), {
+      clientId: inv.clientId, clientName: client?.name || "",
+      amount: inv.total, date: today(), prevBalance: prev, newBalance: newBal,
+      paidInvoices: [inv.docNo],
+      createdAt: serverTimestamp(),
     });
   };
   const del = async (id) => { if (confirm("削除しますか？")) await deleteDoc(doc(db, "invoices", id)); };
@@ -1381,7 +1398,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
       </div>
       <div style={s.card}>
         <table style={s.table}>
-          <thead><tr><th style={s.th}>請求番号</th><th style={s.th}>日付</th><th style={s.th}>取引先</th><th style={s.th}>今回請求額</th><th style={s.th}>残高</th><th style={s.th}>期限</th><th style={s.th}>状態</th><th style={s.th}>送信</th><th style={s.th}>操作</th></tr></thead>
+          <thead><tr><th style={s.th}>請求番号</th><th style={s.th}>日付</th><th style={s.th}>取引先</th><th style={s.th}>請求額</th><th style={s.th}>取引先残高</th><th style={s.th}>期限</th><th style={s.th}>状態</th><th style={s.th}>送信</th><th style={s.th}>操作</th></tr></thead>
           <tbody>
             {filtered.map(inv => {
               const client = clients.find(c => c.id === inv.clientId);
@@ -2254,7 +2271,7 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
 }
 
 // ── Balance Page ──────────────────────────────────────────────────────────────
-function BalancePage({ clients, invoices, balances, company }) {
+function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
   const [balTarget, setBalTarget] = useState(null);
   const [filter, setFilter] = useState("all"); // all | overdue | hasBalance
   const [stripeTarget, setStripeTarget] = useState(null);
@@ -2539,6 +2556,28 @@ function BalancePage({ clients, invoices, balances, company }) {
           </div>
         );
       })()}
+      {/* 入金履歴 */}
+      <div style={s.card}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: C.navy, marginBottom: 12 }}>入金履歴</div>
+        {(paymentHistory || []).length > 0 ? (
+          <table style={s.table}>
+            <thead><tr><th style={s.th}>日付</th><th style={s.th}>取引先</th><th style={s.th}>入金額</th><th style={s.th}>残高変動</th><th style={s.th}>対象請求書</th></tr></thead>
+            <tbody>
+              {(paymentHistory || []).slice(0, 50).map(ph => (
+                <tr key={ph.id}>
+                  <td style={s.td}>{ph.date}</td>
+                  <td style={s.td}>{ph.clientName}</td>
+                  <td style={{ ...s.td, fontWeight: 700, color: C.green }}>¥{fmt(ph.amount)}</td>
+                  <td style={s.td}>¥{fmt(ph.prevBalance)} → ¥{fmt(ph.newBalance)}</td>
+                  <td style={s.td}>{(ph.paidInvoices || []).join(", ") || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div style={{ color: C.gray, textAlign: "center", padding: 20 }}>入金履歴はありません</div>
+        )}
+      </div>
     </div>
   );
 }
@@ -3869,6 +3908,7 @@ export default function App() {
   const [company, setCompany] = useState({});
   const [quotations, setQuotations] = useState([]);
   const [externalSales, setExternalSales] = useState([]);
+  const [paymentHistory, setPaymentHistory] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -3911,6 +3951,7 @@ export default function App() {
     unsubs.push(onSnapshot(collection(db,"clientPrices"),snap=>setClientPrices(snap.docs.map(d=>({id:d.id,...d.data()})))));
     unsubs.push(onSnapshot(collection(db,"divisions"),snap=>setDivisions(snap.docs.map(d=>({id:d.id,...d.data()})))));
     unsubs.push(onSnapshot(collection(db,"externalSales"),snap=>setExternalSales(snap.docs.map(d=>({id:d.id,...d.data()})))));
+    unsubs.push(onSnapshot(query(collection(db,"paymentHistory"),orderBy("createdAt","desc")),snap=>setPaymentHistory(snap.docs.map(d=>({id:d.id,...d.data()})))));
     unsubs.push(onSnapshot(collection(db,"settings"),snap=>{
       if(!snap.empty) setCompany({id:snap.docs[0].id,...snap.docs[0].data()});
       setLoading(false);
@@ -3971,7 +4012,7 @@ export default function App() {
         {page==="invoices"&&<InvoicesList clients={clients} invoices={invoices} deliveries={deliveries} company={company} balances={balances} divisions={divisions} isAdmin={isAdmin}/>}
         {page==="monthly"&&<MonthlyBilling clients={clients} deliveries={deliveries} invoices={invoices} company={company} balances={balances} divisions={divisions}/>}
         {page==="sales"&&<SalesPage clients={clients} invoices={invoices} divisions={divisions} externalSales={externalSales}/>}
-        {page==="balance"&&<BalancePage clients={clients} invoices={invoices} balances={balances} company={company}/>}
+        {page==="balance"&&<BalancePage clients={clients} invoices={invoices} balances={balances} company={company} paymentHistory={paymentHistory}/>}
         {page==="clients"&&<ClientsPage clients={clients} divisions={divisions} isAdmin={isAdmin}/>}
         {page==="products"&&<ProductsPage products={products} company={company} isAdmin={isAdmin}/>}
         {page==="clientPrices"&&<ClientPricesPage clients={clients} products={products} clientPrices={clientPrices} isAdmin={isAdmin}/>}
