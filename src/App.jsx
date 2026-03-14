@@ -1390,7 +1390,10 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
                   <td style={s.td}>¥{fmt(inv.total)}</td>
                   <td style={{ ...s.td, fontWeight: 700, color: (bal.currentBalance||0) > 0 ? C.red : C.green }}>¥{fmt(bal.currentBalance||0)}</td>
                   <td style={{ ...s.td, color: overdue ? C.red : "inherit" }}>{inv.dueDate}</td>
-                  <td style={s.td}><span style={s.badge(inv.status === "paid" ? "green" : overdue ? "red" : "gold")}>{inv.status === "paid" ? "入金済" : overdue ? "期限超過" : "未収"}</span></td>
+                  <td style={s.td}><span style={{ ...s.badge(inv.status === "paid" ? "green" : overdue ? "red" : "gold"), cursor: "pointer" }} onClick={() => {
+                    if (inv.status === "paid") { if (confirm(`${inv.docNo} を未収に戻しますか？`)) updateDoc(doc(db, "invoices", inv.id), { status: "unpaid", paidAt: null }); }
+                    else { if (confirm(`${inv.docNo} を入金済にしますか？`)) updateDoc(doc(db, "invoices", inv.id), { status: "paid", paidAt: today() }); }
+                  }}>{inv.status === "paid" ? "入金済" : overdue ? "期限超過" : "未収"}</span></td>
                   <td style={s.td}>
                     {inv.sentStatus === "sent"
                       ? <span style={s.badge("blue")}>送信済</span>
@@ -1422,10 +1425,9 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
                           )}
                         </span>
                       )}
-                      {inv.status !== "paid" && <>
-                        <button style={{ ...s.btn("green"), padding: "4px 8px", fontSize: 12 }} onClick={() => { if (confirm(`${inv.docNo} を消込（入金済）にしますか？\n※ 残高は変動しません`)) updateDoc(doc(db, "invoices", inv.id), { status: "paid", paidAt: today() }); }}>消込</button>
+                      {inv.status !== "paid" && (
                         <button style={{ ...s.btn("gold"), padding: "4px 8px", fontSize: 12 }} onClick={() => setBalTarget({ client, balance: bal })}>入金記録</button>
-                      </>}
+                      )}
                       {isAdmin && <button style={{ ...s.btn("red"), padding: "4px 8px", fontSize: 12 }} onClick={() => del(inv.id)}>削除</button>}
                     </div>
                   </td>
