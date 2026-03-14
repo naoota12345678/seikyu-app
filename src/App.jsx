@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { db, storage, auth } from "./firebase";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import {
-  collection, addDoc, getDocs, doc, updateDoc, deleteDoc,
+  collection, addDoc, getDocs, getDoc, doc, updateDoc, deleteDoc,
   onSnapshot, query, orderBy, serverTimestamp, writeBatch, setDoc
 } from "firebase/firestore";
 import jsPDF from "jspdf";
@@ -570,7 +570,7 @@ function BalanceModal({ client, balance, onClose }) {
     const n = Number(amount);
     if (!n || n <= 0) return alert("金額を入力してください");
     const prev = balance?.currentBalance || 0;
-    const newBalance = Math.max(0, prev - n);
+    const newBalance = prev - n;
     await setDoc(doc(db, "clientBalances", client.id), {
       clientId: client.id, prevBalance: prev,
       currentBalance: newBalance,
@@ -2297,17 +2297,18 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
   };
 
   // 残高再計算
-  const recalcBalance = async (clientId) => {
-    const bal = balances[clientId] || {};
-    const opening = bal.openingBalance || 0;
-    const invoiceTotal = invoices.filter(i => i.clientId === clientId && i.status === "unpaid").reduce((a, i) => a + (i.total || 0), 0);
+  const recalcBalance = async (clientId, overrideOpening, overrideOpeningDate) => {
+    // Firestoreから最新のbalanceを取得
+    const balSnap = await getDoc(doc(db, "clientBalances", clientId));
+    const bal = balSnap.exists() ? balSnap.data() : {};
+    const opening = overrideOpening !== undefined ? overrideOpening : (bal.openingBalance || 0);
+    // 全請求書（paid/unpaid問わず）− 全入金 = 元帳と同じ計算
+    const invoiceTotal = invoices.filter(i => i.clientId === clientId).reduce((a, i) => a + (i.total || 0), 0);
     const paymentTotal = (paymentHistory || []).filter(p => p.clientId === clientId).reduce((a, p) => a + (p.amount || 0), 0);
     const correct = opening + invoiceTotal - paymentTotal;
-    await setDoc(doc(db, "clientBalances", clientId), {
-      ...bal, clientId,
-      currentBalance: Math.max(0, correct),
-      updatedAt: serverTimestamp(),
-    });
+    const update = { ...bal, clientId, openingBalance: opening, currentBalance: correct, updatedAt: serverTimestamp() };
+    if (overrideOpeningDate) update.openingDate = overrideOpeningDate;
+    await setDoc(doc(db, "clientBalances", clientId), update);
     return correct;
   };
 
@@ -2437,14 +2438,8 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
               <button style={s.btn("primary")} onClick={async () => {
                 const n = Number(openingAmount);
                 const bal = balances[openingTarget.id] || {};
-                const prevOpening = bal.openingBalance || 0;
-                const diff = n - prevOpening;
-                await setDoc(doc(db, "clientBalances", openingTarget.id), {
-                  ...bal, clientId: openingTarget.id,
-                  openingBalance: n, openingDate,
-                  currentBalance: (bal.currentBalance || 0) + diff,
-                  updatedAt: serverTimestamp(),
-                });
+                // 期首残高を設定して残高を再計算（元帳と一致する計算）
+                await recalcBalance(openingTarget.id, n, openingDate);
                 setOpeningTarget(null);
                 alert(`${openingTarget.name} の期首残高を ¥${fmt(n)} に設定しました`);
               }}>保存</button>
