@@ -3518,7 +3518,7 @@ function RecurringPage({ clients, divisions, invoices, company, balances, isAdmi
 }
 
 // ── Pending Approvals ─────────────────────────────────────────────────────────
-function PendingPage({ clients, company, divisions, balances, isAdmin }) {
+function PendingPage({ clients, company, divisions, balances, isAdmin, invoices }) {
   const [pendings, setPendings] = useState([]);
   const [sending, setSending] = useState(null);
 
@@ -3535,7 +3535,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin }) {
     setSending(p.id);
     try {
       const inv = {
-        docNo: genDocNo("INV", []), clientId: p.clientId, date: today(),
+        docNo: genDocNo("INV", invoices), clientId: p.clientId, date: today(),
         dueDate: nextMonthEnd(today()), billingType: p.billingType || "immediate",
         items: p.items, subtotal: p.subtotal, tax: p.tax, total: p.total,
         status: "unpaid", createdAt: serverTimestamp(),
@@ -4142,7 +4142,7 @@ export default function App() {
         {page==="products"&&<ProductsPage products={products} company={company} isAdmin={isAdmin}/>}
         {page==="clientPrices"&&<ClientPricesPage clients={clients} products={products} clientPrices={clientPrices} isAdmin={isAdmin}/>}
         {page==="recurring"&&<RecurringPage clients={clients} divisions={divisions} invoices={invoices} company={company} balances={balances} isAdmin={isAdmin}/>}
-        {page==="pending"&&<PendingPage clients={clients} company={company} divisions={divisions} balances={balances} isAdmin={isAdmin}/>}
+        {page==="pending"&&<PendingPage clients={clients} company={company} divisions={divisions} balances={balances} isAdmin={isAdmin} invoices={invoices}/>}
         {page==="divisions"&&<DivisionsPage divisions={divisions} isAdmin={isAdmin}/>}
         {page==="sendHistory"&&<SendHistoryPage isAdmin={isAdmin}/>}
         {page==="pdfHistory"&&<PDFHistoryPage isAdmin={isAdmin}/>}
