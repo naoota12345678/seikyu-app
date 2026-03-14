@@ -2276,6 +2276,9 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
   const [emailSending, setEmailSending] = useState(false);
   const [reRequestMsg, setReRequestMsg] = useState("");
   const [ledgerFilterClient, setLedgerFilterClient] = useState("");
+  const [openingTarget, setOpeningTarget] = useState(null);
+  const [openingAmount, setOpeningAmount] = useState("");
+  const [openingDate, setOpeningDate] = useState(today().slice(0, 7) + "-01");
   const total = Object.values(balances).reduce((a, b) => a + (b.currentBalance || 0), 0);
 
   const cancelPayment = async (ph) => {
@@ -2367,6 +2370,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
                 <td style={s.td}>{client.daysSinceOldest > 0 ? <span style={{ color: client.daysSinceOldest > 60 ? C.red : client.daysSinceOldest > 30 ? "#856404" : C.gray, fontWeight: 700 }}>{client.daysSinceOldest}日</span> : "—"}</td>
                 <td style={{...s.td,whiteSpace:"nowrap"}}>
                   <button style={{ ...s.btn("gold"), padding: "4px 10px", fontSize: 12 }} onClick={() => setBalTarget({ client, balance: client.bal })}>入金記録</button>
+                  <button style={{ ...s.btn("light"), padding: "4px 10px", fontSize: 12, marginLeft: 4 }} onClick={() => { setOpeningTarget(client); setOpeningAmount(String(client.bal.openingBalance || 0)); setOpeningDate(client.bal.openingDate || today().slice(0,7)+"-01"); }}>期首残高</button>
                   {client.isOverdue && (
                     <span style={{ position: "relative", display: "inline-block", marginLeft: 6 }}>
                       <button style={{ ...s.btn("primary"), padding: "4px 10px", fontSize: 12, background: C.red }} onClick={() => setReRequestMenu(reRequestMenu === client.id ? null : client.id)}>再請求 ▼</button>
@@ -2391,6 +2395,35 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
         </table>
       </div>
       {balTarget && <BalanceModal client={balTarget.client} balance={balTarget.balance} onClose={() => setBalTarget(null)} />}
+      {openingTarget && (
+        <div style={s.modal} onClick={() => setOpeningTarget(null)}>
+          <div style={{ ...s.modalBox, maxWidth: 400 }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: "0 0 16px", color: C.navy }}>期首残高の設定 — {openingTarget.name}</h3>
+            <div style={{ fontSize: 12, color: C.gray, marginBottom: 16 }}>システム導入前の未収残高を設定します。元帳の開始残高に反映されます。</div>
+            <div style={{ ...s.row, marginBottom: 16 }}>
+              <div style={s.col}><span style={s.label}>基準日</span><input style={s.input} type="date" value={openingDate} onChange={e => setOpeningDate(e.target.value)} /></div>
+              <div style={s.col}><span style={s.label}>期首残高（円）</span><input style={{ ...s.input, minWidth: 140 }} type="number" value={openingAmount} onChange={e => setOpeningAmount(e.target.value)} /></div>
+            </div>
+            <div style={{ ...s.row, justifyContent: "flex-end", gap: 8 }}>
+              <button style={s.btn("light")} onClick={() => setOpeningTarget(null)}>キャンセル</button>
+              <button style={s.btn("primary")} onClick={async () => {
+                const n = Number(openingAmount);
+                const bal = balances[openingTarget.id] || {};
+                const prevOpening = bal.openingBalance || 0;
+                const diff = n - prevOpening;
+                await setDoc(doc(db, "clientBalances", openingTarget.id), {
+                  ...bal, clientId: openingTarget.id,
+                  openingBalance: n, openingDate,
+                  currentBalance: (bal.currentBalance || 0) + diff,
+                  updatedAt: serverTimestamp(),
+                });
+                setOpeningTarget(null);
+                alert(`${openingTarget.name} の期首残高を ¥${fmt(n)} に設定しました`);
+              }}>保存</button>
+            </div>
+          </div>
+        </div>
+      )}
       {reRequestTarget && (() => {
         const cl = reRequestTarget;
         const clOverdue = overdueInvoices.filter(i => i.clientId === cl.id);
@@ -2571,6 +2604,17 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
       {(() => {
         // 全取引先の元帳データを生成
         const ledgerEntries = [];
+        // 期首残高（繰越）
+        clients.forEach(cl => {
+          const bal = balances[cl.id] || {};
+          if (bal.openingBalance && bal.openingBalance > 0) {
+            ledgerEntries.push({
+              date: bal.openingDate || "0000-00-00", clientId: cl.id, clientName: cl.name || "—",
+              type: "opening", description: "期首残高（繰越）",
+              debit: bal.openingBalance, credit: 0,
+            });
+          }
+        });
         // 請求書発行（借方 = 残高増）
         invoices.forEach(inv => {
           const cl = clients.find(c => c.id === inv.clientId);
@@ -2623,10 +2667,11 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
                 </tr></thead>
                 <tbody>
                   {withBalance.slice(-100).map((e, i) => (
-                    <tr key={i} style={{ background: e.type === "payment" ? "#f0fff0" : "transparent" }}>
+                    <tr key={i} style={{ background: e.type === "payment" ? "#f0fff0" : e.type === "opening" ? "#f0f4ff" : "transparent" }}>
                       <td style={s.td}>{e.date}</td>
                       <td style={s.td}>{e.clientName}</td>
                       <td style={s.td}>
+                        {e.type === "opening" && <span style={s.badge("navy")}>繰越</span>}
                         {e.type === "invoice" && (() => { const ov = e.status === "unpaid" && e.dueDate && e.dueDate < today(); return <span style={s.badge(e.status === "paid" ? "green" : ov ? "red" : "gold")}>{e.status === "paid" ? "入金済" : ov ? "期限超過" : "未収"}</span>; })()}
                         {" "}{e.description}
                       </td>
