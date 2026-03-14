@@ -1148,41 +1148,54 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
   const div = divisions?.find(d => d.id === docData.divisionId);
   const co = div ? { ...company, ...Object.fromEntries(Object.entries(div).filter(([,v]) => v)) } : company;
 
+  const needApproval = company?.reRequestApproval !== false;
   const resendEmail = async () => {
     if (!cl.email) return alert("取引先のメールアドレスが設定されていません");
     setSending(true);
     setResult(null);
     try {
-      const res = await fetch("/api/send-invoice", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: cl.email,
-          subject: `【再送】請求書 ${invoice.docNo} ${co.name || ""}`,
-          html: `<div style="font-family:sans-serif;color:#333;">
-            <p>${cl.name} 御中</p>
-            <p>いつもお世話になっております。<br>${co.name || ""}です。</p>
-            <p style="white-space:pre-line">${message.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</p>
-            <div style="background:#f4f1ec;padding:14px 18px;border-radius:8px;margin:16px 0">
-              <strong>請求番号：</strong>${invoice.docNo}<br>
-              <strong>金額：</strong>&yen;${Number(invoice.total||0).toLocaleString()}<br>
-              <strong>支払期限：</strong>${invoice.dueDate || "—"}
-            </div>
-            <hr style="border:none;border-top:1px solid #ddd;margin:20px 0">
-            <p style="font-size:12px;color:#888">${co.name || ""}<br>${co.address || ""}<br>TEL ${co.tel || ""}</p>
-          </div>`,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "送信失敗");
-      await addDoc(collection(db, "sendHistory"), {
-        docNo: invoice.docNo, invoiceId: invoice.id,
-        clientId: invoice.clientId, clientName: cl.name || "",
-        email: cl.email, method: "auto", memo: "再送：" + message.slice(0, 50),
-        amount: invoice.total || 0,
-        sentAt: serverTimestamp(), sentBy: "resend",
-      });
-      setResult("success");
+      if (needApproval) {
+        await addDoc(collection(db, "pendingBillings"), {
+          type: "re-request-email",
+          clientId: invoice.clientId, clientName: cl.name || "", email: cl.email,
+          invoiceDocNo: invoice.docNo, invoiceIds: [invoice.id],
+          total: invoice.total || 0,
+          message: `${cl.name} 御中\n\nいつもお世話になっております。\n${co.name || ""}です。\n\n${message}\n\n請求番号：${invoice.docNo}\n金額：¥${Number(invoice.total||0).toLocaleString()}\n支払期限：${invoice.dueDate || "—"}`,
+          status: "pending", createdAt: serverTimestamp(),
+        });
+        setResult("approval");
+      } else {
+        const res = await fetch("/api/send-invoice", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: cl.email,
+            subject: `【再送】請求書 ${invoice.docNo} ${co.name || ""}`,
+            html: `<div style="font-family:sans-serif;color:#333;">
+              <p>${cl.name} 御中</p>
+              <p>いつもお世話になっております。<br>${co.name || ""}です。</p>
+              <p style="white-space:pre-line">${message.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</p>
+              <div style="background:#f4f1ec;padding:14px 18px;border-radius:8px;margin:16px 0">
+                <strong>請求番号：</strong>${invoice.docNo}<br>
+                <strong>金額：</strong>&yen;${Number(invoice.total||0).toLocaleString()}<br>
+                <strong>支払期限：</strong>${invoice.dueDate || "—"}
+              </div>
+              <hr style="border:none;border-top:1px solid #ddd;margin:20px 0">
+              <p style="font-size:12px;color:#888">${co.name || ""}<br>${co.address || ""}<br>TEL ${co.tel || ""}</p>
+            </div>`,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "送信失敗");
+        await addDoc(collection(db, "sendHistory"), {
+          docNo: invoice.docNo, invoiceId: invoice.id,
+          clientId: invoice.clientId, clientName: cl.name || "",
+          email: cl.email, method: "auto", memo: "再送：" + message.slice(0, 50),
+          amount: invoice.total || 0,
+          sentAt: serverTimestamp(), sentBy: "resend",
+        });
+        setResult("success");
+      }
     } catch (e) {
       setResult("error: " + e.message);
     }
@@ -1218,6 +1231,11 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
             再送が完了しました
             <button style={{ ...s.btn("light"), marginLeft: 12 }} onClick={onClose}>閉じる</button>
           </div>
+        ) : result === "approval" ? (
+          <div style={{ background: "#d4edda", padding: 16, borderRadius: 8, marginBottom: 16, color: C.green, fontWeight: 700 }}>
+            承認待ちに追加しました。承認待ちページで確認・送信してください。
+            <button style={{ ...s.btn("light"), marginLeft: 12 }} onClick={onClose}>閉じる</button>
+          </div>
         ) : (
           <>
             <div style={{ ...s.col, gap: 12, marginBottom: 20 }}>
@@ -1233,7 +1251,7 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
               <button style={s.btn("light")} onClick={onClose}>キャンセル</button>
               <button style={{ ...s.btn("light"), border: `1px solid ${C.navy}` }} onClick={handlePrint}>🖨 印刷して郵送</button>
               <button style={s.btn("primary")} onClick={resendEmail} disabled={sending || !cl.email}>
-                {sending ? "送信中..." : "📧 メール再送"}
+                {sending ? "処理中..." : needApproval ? "📧 承認待ちに追加" : "📧 メール再送"}
               </button>
             </div>
           </>
@@ -2121,8 +2139,8 @@ function BalancePage({ clients, invoices, balances, company }) {
           setEmailSending(false);
         };
         return (
-          <div style={s.overlay} onClick={() => { if (!emailSending) { setReRequestTarget(null); setReRequestMsg(""); } }}>
-            <div style={{ ...s.modal, maxWidth: 560 }} onClick={e => e.stopPropagation()}>
+          <div style={s.modal} onClick={() => { if (!emailSending) { setReRequestTarget(null); setReRequestMsg(""); } }}>
+            <div style={{ ...s.modalBox, maxWidth: 560 }} onClick={e => e.stopPropagation()}>
               <h3 style={{ margin: "0 0 16px", color: C.navy }}>メールで再請求</h3>
               <div style={{ background: "#f8f9fa", borderRadius: 8, padding: 16, marginBottom: 16 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>{cl.name}</div>
@@ -2208,8 +2226,8 @@ function BalancePage({ clients, invoices, balances, company }) {
           setStripeSending(false);
         };
         return (
-          <div style={s.overlay} onClick={() => !stripeSending && setStripeTarget(null)}>
-            <div style={{ ...s.modal, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
+          <div style={s.modal} onClick={() => !stripeSending && setStripeTarget(null)}>
+            <div style={{ ...s.modalBox, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
               <h3 style={{ margin: "0 0 16px", color: "#635BFF" }}>Stripe再請求</h3>
               <div style={{ background: "#f8f9fa", borderRadius: 8, padding: 16, marginBottom: 16 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>{cl.name}</div>
@@ -3635,12 +3653,14 @@ export default function App() {
     { id: "monthly", label: "📅 月締め管理" },
     { id: "sales", label: "📈 売上管理" },
     { id: "balance", label: "💰 残高管理" },
+    { id: "pending", label: "⏳ 承認待ち" },
+    { id: "recurring", label: "🔄 定期請求" },
+    { type: "group", label: "マスタ" },
     { id: "clients", label: "🏢 取引先管理" },
     { id: "products", label: "🗂 商品マスタ" },
     { id: "clientPrices", label: "💲 取引先別単価" },
-    { id: "recurring", label: "🔄 定期請求" },
-    { id: "pending", label: "⏳ 承認待ち" },
     { id: "divisions", label: "🏭 事業部管理" },
+    { type: "group", label: "履歴" },
     { id: "sendHistory", label: "📨 送信履歴" },
     { id: "pdfHistory", label: "📁 PDF履歴" },
     { id: "settings", label: "⚙ 設定" },
@@ -3655,7 +3675,10 @@ export default function App() {
           <div style={{fontSize:16,fontWeight:700}}>📋 請求管理</div>
           <div style={{fontSize:11,color:"rgba(255,255,255,0.5)",marginTop:4}}>{company?.name||"自社名未設定"}</div>
         </div>
-        {nav.map(n=><button key={n.id} style={s.navBtn(page===n.id)} onClick={()=>setPage(n.id)}>{n.label}</button>)}
+        {nav.map((n,i)=> n.type === "group"
+          ? <div key={"g"+i} style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", padding: "12px 20px 4px", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>{n.label}</div>
+          : <button key={n.id} style={s.navBtn(page===n.id)} onClick={()=>setPage(n.id)}>{n.label}</button>
+        )}
         <div style={{ marginTop: "auto", padding: "16px 20px", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
           <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user?.email}</div>
           <div style={{ fontSize: 10, color: isAdmin ? C.gold : "rgba(255,255,255,0.4)", marginBottom: 8 }}>{isAdmin ? "管理者" : "スタッフ"}</div>
