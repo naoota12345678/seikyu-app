@@ -2577,7 +2577,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
           ledgerEntries.push({
             date: inv.date || "", clientId: inv.clientId, clientName: cl?.name || "—",
             type: "invoice", description: `請求書 ${inv.docNo}`,
-            debit: inv.total || 0, credit: 0, docNo: inv.docNo, status: inv.status,
+            debit: inv.total || 0, credit: 0, docNo: inv.docNo, status: inv.status, dueDate: inv.dueDate || "",
           });
         });
         // 入金（貸方 = 残高減）
@@ -2627,7 +2627,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
                       <td style={s.td}>{e.date}</td>
                       <td style={s.td}>{e.clientName}</td>
                       <td style={s.td}>
-                        {e.type === "invoice" && <span style={s.badge(e.status === "paid" ? "green" : "gold")}>{e.status === "paid" ? "入金済" : "未収"}</span>}
+                        {e.type === "invoice" && (() => { const ov = e.status === "unpaid" && e.dueDate && e.dueDate < today(); return <span style={s.badge(e.status === "paid" ? "green" : ov ? "red" : "gold")}>{e.status === "paid" ? "入金済" : ov ? "期限超過" : "未収"}</span>; })()}
                         {" "}{e.description}
                       </td>
                       <td style={{ ...s.td, textAlign: "right", color: e.debit ? C.red : "transparent" }}>{e.debit ? `¥${fmt(e.debit)}` : ""}</td>
