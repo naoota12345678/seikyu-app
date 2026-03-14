@@ -2280,6 +2280,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
   const [reRequestMenu, setReRequestMenu] = useState(null);
   const [emailSending, setEmailSending] = useState(false);
   const [reRequestMsg, setReRequestMsg] = useState("");
+  const [ledgerFilterClient, setLedgerFilterClient] = useState("");
   const total = Object.values(balances).reduce((a, b) => a + (b.currentBalance || 0), 0);
 
   // 1ヶ月以上未入金の請求書を検出
@@ -2556,28 +2557,81 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
           </div>
         );
       })()}
-      {/* 入金履歴 */}
-      <div style={s.card}>
-        <div style={{ fontSize: 16, fontWeight: 700, color: C.navy, marginBottom: 12 }}>入金履歴</div>
-        {(paymentHistory || []).length > 0 ? (
-          <table style={s.table}>
-            <thead><tr><th style={s.th}>日付</th><th style={s.th}>取引先</th><th style={s.th}>入金額</th><th style={s.th}>残高変動</th><th style={s.th}>対象請求書</th></tr></thead>
-            <tbody>
-              {(paymentHistory || []).slice(0, 50).map(ph => (
-                <tr key={ph.id}>
-                  <td style={s.td}>{ph.date}</td>
-                  <td style={s.td}>{ph.clientName}</td>
-                  <td style={{ ...s.td, fontWeight: 700, color: C.green }}>¥{fmt(ph.amount)}</td>
-                  <td style={s.td}>¥{fmt(ph.prevBalance)} → ¥{fmt(ph.newBalance)}</td>
-                  <td style={s.td}>{(ph.paidInvoices || []).join(", ") || "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <div style={{ color: C.gray, textAlign: "center", padding: 20 }}>入金履歴はありません</div>
-        )}
-      </div>
+      {/* 取引先元帳 */}
+      {(() => {
+        // 全取引先の元帳データを生成
+        const ledgerEntries = [];
+        // 請求書発行（借方 = 残高増）
+        invoices.forEach(inv => {
+          const cl = clients.find(c => c.id === inv.clientId);
+          ledgerEntries.push({
+            date: inv.date || "", clientId: inv.clientId, clientName: cl?.name || "—",
+            type: "invoice", description: `請求書 ${inv.docNo}`,
+            debit: inv.total || 0, credit: 0, docNo: inv.docNo, status: inv.status,
+          });
+        });
+        // 入金（貸方 = 残高減）
+        (paymentHistory || []).forEach(ph => {
+          ledgerEntries.push({
+            date: ph.date || "", clientId: ph.clientId, clientName: ph.clientName || "—",
+            type: "payment", description: `入金${(ph.paidInvoices || []).length ? "（" + ph.paidInvoices.join(", ") + "）" : ""}`,
+            debit: 0, credit: ph.amount || 0,
+          });
+        });
+        // 日付順ソート
+        ledgerEntries.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+        const filteredLedger = ledgerFilterClient
+          ? ledgerEntries.filter(e => e.clientId === ledgerFilterClient)
+          : ledgerEntries;
+        // 残高を積み上げ計算
+        const clientRunning = {};
+        const withBalance = filteredLedger.map(e => {
+          const key = e.clientId;
+          if (!clientRunning[key]) clientRunning[key] = 0;
+          clientRunning[key] += e.debit - e.credit;
+          return { ...e, balance: clientRunning[key] };
+        });
+        return (
+          <div style={s.card}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: C.navy }}>取引先元帳</div>
+              <select style={{ ...s.input, maxWidth: 240 }} value={ledgerFilterClient} onChange={e => setLedgerFilterClient(e.target.value)}>
+                <option value="">すべての取引先</option>
+                {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            {withBalance.length > 0 ? (
+              <table style={s.table}>
+                <thead><tr>
+                  <th style={s.th}>日付</th>
+                  <th style={s.th}>取引先</th>
+                  <th style={s.th}>摘要</th>
+                  <th style={{ ...s.th, textAlign: "right" }}>借方（請求）</th>
+                  <th style={{ ...s.th, textAlign: "right" }}>貸方（入金）</th>
+                  <th style={{ ...s.th, textAlign: "right" }}>残高</th>
+                </tr></thead>
+                <tbody>
+                  {withBalance.slice(-100).map((e, i) => (
+                    <tr key={i} style={{ background: e.type === "payment" ? "#f0fff0" : "transparent" }}>
+                      <td style={s.td}>{e.date}</td>
+                      <td style={s.td}>{e.clientName}</td>
+                      <td style={s.td}>
+                        {e.type === "invoice" && <span style={s.badge(e.status === "paid" ? "green" : "gold")}>{e.status === "paid" ? "入金済" : "未収"}</span>}
+                        {" "}{e.description}
+                      </td>
+                      <td style={{ ...s.td, textAlign: "right", color: e.debit ? C.red : "transparent" }}>{e.debit ? `¥${fmt(e.debit)}` : ""}</td>
+                      <td style={{ ...s.td, textAlign: "right", color: e.credit ? C.green : "transparent" }}>{e.credit ? `¥${fmt(e.credit)}` : ""}</td>
+                      <td style={{ ...s.td, textAlign: "right", fontWeight: 700, color: e.balance > 0 ? C.red : C.green }}>¥{fmt(e.balance)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div style={{ color: C.gray, textAlign: "center", padding: 20 }}>取引データがありません</div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
