@@ -2248,7 +2248,7 @@ function BalancePage({ clients, invoices, balances, company }) {
       {balTarget && <BalanceModal client={balTarget.client} balance={balTarget.balance} onClose={() => setBalTarget(null)} />}
       {reRequestTarget && (() => {
         const cl = reRequestTarget;
-        const clOverdue = invoices.filter(i => i.status === "unpaid" && i.clientId === cl.id);
+        const clOverdue = overdueInvoices.filter(i => i.clientId === cl.id);
         const overdueTotal = clOverdue.reduce((a, i) => a + (i.total || 0), 0);
         const docNos = clOverdue.map(i => i.docNo).join(", ");
         const defaultMsg = `${cl.name} 御中\n\nいつもお世話になっております。\n下記の請求につきまして、お支払い期日を過ぎておりますのでご確認をお願いいたします。\n\n対象請求: ${docNos}\n未入金額: ¥${fmt(overdueTotal)}\n\nお忙しいところ恐れ入りますが、ご確認のほどよろしくお願いいたします。`;
@@ -2335,7 +2335,7 @@ function BalancePage({ clients, invoices, balances, company }) {
       })()}
       {stripeTarget && (() => {
         const cl = stripeTarget;
-        const clOverdue = invoices.filter(i => i.status === "unpaid" && i.clientId === cl.id);
+        const clOverdue = overdueInvoices.filter(i => i.clientId === cl.id);
         const overdueTotal = clOverdue.reduce((a, i) => a + (i.total || 0), 0);
         const docNos = clOverdue.map(i => i.docNo).join(", ");
         const needApproval = company?.reRequestApproval !== false;
