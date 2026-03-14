@@ -3332,9 +3332,17 @@ function SettingsPage({ company, setCompany }) {
           <div style={s.col}><span style={s.label}>住所</span><input style={{...s.input,minWidth:400}} value={form.address||""} onChange={e=>setF("address",e.target.value)} /></div>
           <div style={s.col}><span style={s.label}>インボイス登録番号</span><input style={{...s.input,minWidth:220}} value={form.registrationNo||""} onChange={e=>setF("registrationNo",e.target.value)} placeholder="T6430001064243" /></div>
           <div style={s.col}><span style={s.label}>デフォルト税率</span>
-            <select style={{...s.select,width:100}} value={form.defaultTaxRate!==undefined?String(form.defaultTaxRate):"10"} onChange={e=>setF("defaultTaxRate",Number(e.target.value))}>
-              <option value="10">10%</option><option value="8">8%</option><option value="0">0%</option>
-            </select>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <select style={{...s.select,width:100}} value={form.defaultTaxRate!==undefined&&[10,8,0].includes(form.defaultTaxRate)?String(form.defaultTaxRate):"custom"} onChange={e=>{if(e.target.value==="custom")setF("defaultTaxRate",5);else setF("defaultTaxRate",Number(e.target.value));}}>
+                <option value="10">10%</option><option value="8">8%</option><option value="0">0%</option><option value="custom">自由設定</option>
+              </select>
+              {form.defaultTaxRate!==undefined&&![10,8,0].includes(form.defaultTaxRate)&&(
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <input style={{...s.input,width:60,textAlign:"right"}} type="number" min="0" max="100" step="0.1" value={form.defaultTaxRate} onChange={e=>setF("defaultTaxRate",Number(e.target.value))} />
+                  <span style={{ fontSize: 13 }}>%</span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
