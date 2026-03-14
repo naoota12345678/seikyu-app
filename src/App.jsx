@@ -4182,6 +4182,8 @@ export default function App() {
 
   const isAdmin = userRole === "admin";
 
+  const [openGroups, setOpenGroups] = useState({});
+  const toggleGroup = (g) => setOpenGroups(prev => ({ ...prev, [g]: !prev[g] }));
   const nav = [
     { id: "dashboard", label: "📊 ダッシュボード" },
     { id: "sales", label: "📈 売上管理" },
@@ -4192,14 +4194,16 @@ export default function App() {
     { id: "balance", label: "💰 残高管理" },
     { id: "pending", label: "⏳ 承認待ち" },
     { id: "recurring", label: "🔄 定期請求" },
-    { type: "group", label: "マスタ" },
-    { id: "clients", label: "🏢 取引先管理" },
-    { id: "products", label: "🗂 商品マスタ" },
-    { id: "clientPrices", label: "💲 取引先別単価" },
-    { id: "divisions", label: "🏭 事業部管理" },
-    { type: "group", label: "履歴" },
-    { id: "sendHistory", label: "📨 送信履歴" },
-    { id: "pdfHistory", label: "📁 PDF履歴" },
+    { type: "group", label: "マスタ", children: [
+      { id: "clients", label: "🏢 取引先管理" },
+      { id: "products", label: "🗂 商品マスタ" },
+      { id: "clientPrices", label: "💲 取引先別単価" },
+      { id: "divisions", label: "🏭 事業部管理" },
+    ]},
+    { type: "group", label: "履歴", children: [
+      { id: "sendHistory", label: "📨 送信履歴" },
+      { id: "pdfHistory", label: "📁 PDF履歴" },
+    ]},
     { id: "settings", label: "⚙ 設定" },
   ];
 
@@ -4212,10 +4216,19 @@ export default function App() {
           <div style={{fontSize:16,fontWeight:700}}>📋 請求管理</div>
           <div style={{fontSize:11,color:"rgba(255,255,255,0.5)",marginTop:4}}>{company?.name||"自社名未設定"}</div>
         </div>
-        {nav.map((n,i)=> n.type === "group"
-          ? <div key={"g"+i} style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", padding: "12px 20px 4px", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>{n.label}</div>
-          : <button key={n.id} style={s.navBtn(page===n.id)} onClick={()=>setPage(n.id)}>{n.label}</button>
-        )}
+        {nav.map((n,i)=> n.type === "group" ? (
+          <div key={"g"+i}>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", padding: "10px 20px 6px", fontWeight: 700, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }} onClick={() => toggleGroup(n.label)}>
+              <span>{n.label}</span>
+              <span style={{ fontSize: 10 }}>{openGroups[n.label] ? "▲" : "▼"}</span>
+            </div>
+            {openGroups[n.label] && n.children.map(c => (
+              <button key={c.id} style={{ ...s.navBtn(page===c.id), paddingLeft: 36 }} onClick={()=>setPage(c.id)}>{c.label}</button>
+            ))}
+          </div>
+        ) : (
+          <button key={n.id} style={s.navBtn(page===n.id)} onClick={()=>setPage(n.id)}>{n.label}</button>
+        ))}
         <div style={{ marginTop: "auto", padding: "16px 20px", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
           <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user?.email}</div>
           <div style={{ fontSize: 10, color: isAdmin ? C.gold : "rgba(255,255,255,0.4)", marginBottom: 8 }}>{isAdmin ? "管理者" : "スタッフ"}</div>
