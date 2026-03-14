@@ -1268,6 +1268,12 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
   const [balTarget, setBalTarget] = useState(null);
   const [sendTarget, setSendTarget] = useState(null);
   const [resendTarget, setResendTarget] = useState(null);
+  const [reRequestMenu, setReRequestMenu] = useState(null);
+  const [reRequestTarget, setReRequestTarget] = useState(null);
+  const [reRequestMsg, setReRequestMsg] = useState("");
+  const [emailSending, setEmailSending] = useState(false);
+  const [stripeTarget, setStripeTarget] = useState(null);
+  const [stripeSending, setStripeSending] = useState(false);
   const filtered = invoices.filter(i => {
     const cn = clients.find(c => c.id === i.clientId)?.name || "";
     return cn.includes(search) || (i.docNo || "").includes(search);
@@ -1320,6 +1326,23 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
                         ? <button style={{ ...s.btn("primary"), padding: "4px 8px", fontSize: 12 }} onClick={() => setSendTarget(inv)}>送信</button>
                         : <button style={{ ...s.btn("light"), padding: "4px 8px", fontSize: 12 }} onClick={() => setResendTarget(inv)}>🔄 再送</button>
                       }
+                      {inv.status === "unpaid" && (
+                        <span style={{ position: "relative", display: "inline-block" }}>
+                          <button style={{ ...s.btn("primary"), padding: "4px 8px", fontSize: 12, background: C.red }} onClick={() => setReRequestMenu(reRequestMenu === inv.id ? null : inv.id)}>再請求 ▼</button>
+                          {reRequestMenu === inv.id && (
+                            <div style={{ position: "absolute", top: "100%", right: 0, background: "white", border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.15)", zIndex: 100, minWidth: 180, marginTop: 4 }}>
+                              <button style={{ display: "block", width: "100%", padding: "10px 16px", border: "none", background: "none", textAlign: "left", cursor: "pointer", fontSize: 13, color: C.navy }} onMouseOver={e=>e.target.style.background="#f0f0f0"} onMouseOut={e=>e.target.style.background="none"} onClick={() => { setReRequestMenu(null); setReRequestTarget(inv); }}>
+                                ✉ メールで再請求<br/><span style={{ fontSize: 11, color: C.gray }}>督促メール送信</span>
+                              </button>
+                              {company?.stripeSecretKey && (
+                                <button style={{ display: "block", width: "100%", padding: "10px 16px", border: "none", borderTop: `1px solid ${C.border}`, background: "none", textAlign: "left", cursor: "pointer", fontSize: 13, color: "#635BFF" }} onMouseOver={e=>e.target.style.background="#f0f0f0"} onMouseOut={e=>e.target.style.background="none"} onClick={() => { setReRequestMenu(null); setStripeTarget(inv); }}>
+                                  💳 Stripeで請求<br/><span style={{ fontSize: 11, color: C.gray }}>オンライン決済・手数料3.6%</span>
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </span>
+                      )}
                       {inv.status !== "paid" && <>
                         <button style={{ ...s.btn("green"), padding: "4px 8px", fontSize: 12 }} onClick={() => markPaid(inv)}>入金済</button>
                         <button style={{ ...s.btn("gold"), padding: "4px 8px", fontSize: 12 }} onClick={() => setBalTarget({ client, balance: bal })}>入金記録</button>
@@ -1338,6 +1361,143 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
       {balTarget && <BalanceModal client={balTarget.client} balance={balTarget.balance} onClose={() => setBalTarget(null)} />}
       {sendTarget && <SendRecordModal invoice={sendTarget} clients={clients} company={company} divisions={divisions} balances={balances} onClose={() => setSendTarget(null)} />}
       {resendTarget && <ResendModal invoice={resendTarget} clients={clients} company={company} divisions={divisions} balances={balances} onClose={() => setResendTarget(null)} />}
+      {reRequestTarget && (() => {
+        const inv = reRequestTarget;
+        const cl = clients.find(c => c.id === inv.clientId) || {};
+        const defaultMsg = `${cl.name || ""} 御中\n\nいつもお世話になっております。\n下記の請求につきまして、お支払い期日を過ぎておりますのでご確認をお願いいたします。\n\n対象請求: ${inv.docNo}\n未入金額: ¥${fmt(inv.total || 0)}\n\nお忙しいところ恐れ入りますが、ご確認のほどよろしくお願いいたします。`;
+        if (!reRequestMsg) setTimeout(() => setReRequestMsg(defaultMsg), 0);
+        const msg = reRequestMsg || defaultMsg;
+        const needApproval = company?.reRequestApproval !== false;
+        const sendEmailReRequest = async () => {
+          if (!cl.email) return alert("取引先のメールアドレスが設定されていません");
+          setEmailSending(true);
+          try {
+            if (needApproval) {
+              await addDoc(collection(db, "pendingBillings"), {
+                type: "re-request-email",
+                clientId: inv.clientId, clientName: cl.name || "", email: cl.email,
+                invoiceDocNo: inv.docNo, invoiceIds: [inv.id],
+                total: inv.total || 0, message: msg,
+                status: "pending", createdAt: serverTimestamp(),
+              });
+              alert("承認待ちに追加しました。承認待ちページで確認・送信してください。");
+              setReRequestTarget(null); setReRequestMsg("");
+            } else {
+              if (!confirm(`${cl.name}（${cl.email}）にお支払いのお願いメールを送信します。`)) { setEmailSending(false); return; }
+              const htmlBody = msg.replace(/\n/g, "<br/>");
+              const res = await fetch("/api/send-invoice", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ to: cl.email, subject: `【お支払いのお願い】${inv.docNo}`, html: htmlBody }),
+              });
+              const data = await res.json();
+              if (data.success) {
+                await addDoc(collection(db, "sendHistory"), {
+                  docNo: inv.docNo, invoiceId: inv.id, clientId: inv.clientId,
+                  clientName: cl.name || "", email: cl.email, method: "mail",
+                  memo: `再請求メール ¥${fmt(inv.total || 0)}`,
+                  amount: inv.total || 0, sentAt: serverTimestamp(), sentBy: "re-request",
+                });
+                alert("再請求メールを送信しました");
+                setReRequestTarget(null); setReRequestMsg("");
+              } else { alert("送信エラー: " + (data.error || "不明なエラー")); }
+            }
+          } catch (e) { alert("エラー: " + e.message); }
+          setEmailSending(false);
+        };
+        return (
+          <div style={s.modal} onClick={() => { if (!emailSending) { setReRequestTarget(null); setReRequestMsg(""); } }}>
+            <div style={{ ...s.modalBox, maxWidth: 560 }} onClick={e => e.stopPropagation()}>
+              <h3 style={{ margin: "0 0 16px", color: C.navy }}>メールで再請求</h3>
+              <div style={{ background: "#f8f9fa", borderRadius: 8, padding: 16, marginBottom: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>{cl.name}</div>
+                <div style={{ fontSize: 13, color: C.gray, marginBottom: 4 }}>送信先: {cl.email || <span style={{ color: C.red }}>未設定</span>}</div>
+                <div style={{ fontSize: 13, color: C.gray }}>対象: {inv.docNo} / ¥{fmt(inv.total || 0)}</div>
+              </div>
+              <div style={{ marginBottom: 16 }}>
+                <span style={{ ...s.label, marginBottom: 6, display: "block" }}>メール本文</span>
+                <textarea style={{ ...s.input, width: "100%", minHeight: 160, fontFamily: "inherit", lineHeight: 1.6 }} value={msg} onChange={e => setReRequestMsg(e.target.value)} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
+                <button style={s.btn("light")} onClick={() => { setReRequestTarget(null); setReRequestMsg(""); }} disabled={emailSending}>キャンセル</button>
+                <button style={s.btn("primary")} onClick={sendEmailReRequest} disabled={emailSending || !cl.email}>
+                  {emailSending ? "処理中..." : needApproval ? "承認待ちに追加" : "再請求メールを送信"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+      {stripeTarget && (() => {
+        const inv = stripeTarget;
+        const cl = clients.find(c => c.id === inv.clientId) || {};
+        const needApproval = company?.reRequestApproval !== false;
+        const sendStripeInvoice = async () => {
+          if (!cl.email) return alert("取引先のメールアドレスが設定されていません");
+          setStripeSending(true);
+          try {
+            const items = [{ name: `${inv.docNo} 未入金分`, qty: 1, unitAmount: inv.total || 0 }];
+            if (needApproval) {
+              await addDoc(collection(db, "pendingBillings"), {
+                type: "re-request-stripe",
+                clientId: inv.clientId, clientName: cl.name || "", email: cl.email,
+                invoiceDocNo: inv.docNo, invoiceIds: [inv.id],
+                total: inv.total || 0, invoiceItems: items,
+                status: "pending", createdAt: serverTimestamp(),
+              });
+              alert("承認待ちに追加しました。承認待ちページで確認・送信してください。");
+              setStripeTarget(null);
+            } else {
+              if (!confirm(`${cl.name} に ¥${fmt(inv.total || 0)} のStripe請求書を送信します。\n\n対象: ${inv.docNo}\n送信先: ${cl.email}\n\n※ Stripe手数料（3.6%）が発生します。`)) { setStripeSending(false); return; }
+              const res = await fetch("/api/stripe-invoice", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  stripeSecretKey: company.stripeSecretKey,
+                  clientName: cl.name, email: cl.email,
+                  amount: inv.total || 0, currency: "jpy",
+                  description: `未入金再請求（${inv.docNo}）`,
+                  invoiceItems: items, docNos: inv.docNo,
+                }),
+              });
+              const data = await res.json();
+              if (data.success) {
+                await addDoc(collection(db, "sendHistory"), {
+                  docNo: inv.docNo, invoiceId: inv.id, clientId: inv.clientId,
+                  clientName: cl.name || "", email: cl.email, method: "stripe",
+                  memo: `Stripe再請求 ¥${fmt(inv.total || 0)} / ${data.invoiceUrl}`,
+                  amount: inv.total || 0, sentAt: serverTimestamp(), sentBy: "stripe",
+                });
+                alert(`Stripe請求書を送信しました！\n\n決済URL: ${data.invoiceUrl}`);
+                setStripeTarget(null);
+              } else { alert("Stripe請求エラー: " + (data.error || "不明なエラー")); }
+            }
+          } catch (e) { alert("エラー: " + e.message); }
+          setStripeSending(false);
+        };
+        return (
+          <div style={s.modal} onClick={() => !stripeSending && setStripeTarget(null)}>
+            <div style={{ ...s.modalBox, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
+              <h3 style={{ margin: "0 0 16px", color: "#635BFF" }}>Stripe再請求</h3>
+              <div style={{ background: "#f8f9fa", borderRadius: 8, padding: 16, marginBottom: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>{cl.name}</div>
+                <div style={{ fontSize: 13, color: C.gray, marginBottom: 4 }}>送信先: {cl.email || <span style={{ color: C.red }}>未設定</span>}</div>
+                <div style={{ fontSize: 13, color: C.gray }}>対象: {inv.docNo} / ¥{fmt(inv.total || 0)}</div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: "#635BFF" }}>合計: ¥{fmt(inv.total || 0)}</div>
+                  <div style={{ fontSize: 11, color: C.gray }}>Stripe手数料: 約¥{fmt(Math.round((inv.total || 0) * 0.036))}（3.6%）</div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button style={s.btn("light")} onClick={() => setStripeTarget(null)} disabled={stripeSending}>キャンセル</button>
+                  <button style={{ ...s.btn("primary"), background: "#635BFF" }} onClick={sendStripeInvoice} disabled={stripeSending || !cl.email}>
+                    {stripeSending ? "処理中..." : needApproval ? "承認待ちに追加" : "Stripe請求書を送信"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -3647,11 +3807,11 @@ export default function App() {
 
   const nav = [
     { id: "dashboard", label: "📊 ダッシュボード" },
+    { id: "sales", label: "📈 売上管理" },
     { id: "quotations", label: "📝 見積書一覧" },
     { id: "deliveries", label: "📦 納品書一覧" },
     { id: "invoices", label: "🧾 請求書一覧" },
     { id: "monthly", label: "📅 月締め管理" },
-    { id: "sales", label: "📈 売上管理" },
     { id: "balance", label: "💰 残高管理" },
     { id: "pending", label: "⏳ 承認待ち" },
     { id: "recurring", label: "🔄 定期請求" },
