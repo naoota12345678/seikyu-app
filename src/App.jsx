@@ -563,7 +563,7 @@ function PrintModeModal({ invoice, delivery, clients, company, balances, divisio
 }
 
 // ── Balance Modal ────────────────────────────────────────────────────────────
-function BalanceModal({ client, balance, onClose, invoices }) {
+function BalanceModal({ client, balance, onClose }) {
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(today());
   const save = async () => {
@@ -579,25 +579,9 @@ function BalanceModal({ client, balance, onClose, invoices }) {
       updatedAt: serverTimestamp(),
     });
     // 入金履歴を保存
-    const paidInvIds = [];
-    if (invoices) {
-      const unpaid = invoices
-        .filter(i => i.clientId === client.id && i.status === "unpaid")
-        .sort((a, b) => (a.date || "").localeCompare(b.date || ""));
-      let remaining = n;
-      for (const inv of unpaid) {
-        if (remaining <= 0) break;
-        if (remaining >= (inv.total || 0)) {
-          await updateDoc(doc(db, "invoices", inv.id), { status: "paid", paidAt: date });
-          paidInvIds.push(inv.docNo);
-          remaining -= (inv.total || 0);
-        }
-      }
-    }
     await addDoc(collection(db, "paymentHistory"), {
       clientId: client.id, clientName: client.name || "",
       amount: n, date, prevBalance: prev, newBalance,
-      paidInvoices: paidInvIds,
       createdAt: serverTimestamp(),
     });
     onClose();
@@ -1369,25 +1353,6 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
     return cn.includes(search) || (i.docNo || "").includes(search);
   });
   const totalBal = Object.values(balances).reduce((a, b) => a + (b.currentBalance || 0), 0);
-  const markPaid = async (inv) => {
-    const client = clients.find(c => c.id === inv.clientId);
-    await updateDoc(doc(db, "invoices", inv.id), { status: "paid", paidAt: today() });
-    const bal = balances[inv.clientId] || {};
-    const prev = bal.currentBalance || 0;
-    const newBal = Math.max(0, prev - inv.total);
-    await setDoc(doc(db, "clientBalances", inv.clientId), {
-      clientId: inv.clientId, prevBalance: prev,
-      currentBalance: newBal,
-      paidAmount: (bal.paidAmount || 0) + inv.total,
-      lastPaidDate: today(), lastPaidAmount: inv.total, updatedAt: serverTimestamp(),
-    });
-    await addDoc(collection(db, "paymentHistory"), {
-      clientId: inv.clientId, clientName: client?.name || "",
-      amount: inv.total, date: today(), prevBalance: prev, newBalance: newBal,
-      paidInvoices: [inv.docNo],
-      createdAt: serverTimestamp(),
-    });
-  };
   const del = async (id) => { if (confirm("削除しますか？")) await deleteDoc(doc(db, "invoices", id)); };
   return (
     <div>
@@ -1444,10 +1409,9 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
                           )}
                         </span>
                       )}
-                      {inv.status !== "paid" && <>
-                        <button style={{ ...s.btn("green"), padding: "4px 8px", fontSize: 12 }} onClick={() => markPaid(inv)}>入金済</button>
+                      {inv.status !== "paid" && (
                         <button style={{ ...s.btn("gold"), padding: "4px 8px", fontSize: 12 }} onClick={() => setBalTarget({ client, balance: bal })}>入金記録</button>
-                      </>}
+                      )}
                       {isAdmin && <button style={{ ...s.btn("red"), padding: "4px 8px", fontSize: 12 }} onClick={() => del(inv.id)}>削除</button>}
                     </div>
                   </td>
@@ -1459,7 +1423,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
       </div>
       {printTarget && <PrintModeModal invoice={printTarget.invoice} delivery={printTarget.delivery}
         clients={clients} company={company} balances={balances} divisions={divisions} onClose={() => setPrintTarget(null)} />}
-      {balTarget && <BalanceModal client={balTarget.client} balance={balTarget.balance} invoices={invoices} onClose={() => setBalTarget(null)} />}
+      {balTarget && <BalanceModal client={balTarget.client} balance={balTarget.balance} onClose={() => setBalTarget(null)} />}
       {sendTarget && <SendRecordModal invoice={sendTarget} clients={clients} company={company} divisions={divisions} balances={balances} onClose={() => setSendTarget(null)} />}
       {resendTarget && <ResendModal invoice={resendTarget} clients={clients} company={company} divisions={divisions} balances={balances} onClose={() => setResendTarget(null)} />}
       {reRequestTarget && (() => {
@@ -2283,6 +2247,21 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
   const [ledgerFilterClient, setLedgerFilterClient] = useState("");
   const total = Object.values(balances).reduce((a, b) => a + (b.currentBalance || 0), 0);
 
+  const cancelPayment = async (ph) => {
+    if (!confirm(`${ph.clientName} の入金 ¥${fmt(ph.amount)}（${ph.date}）を取り消しますか？\n\n残高が元に戻ります。`)) return;
+    // 残高を戻す
+    const bal = balances[ph.clientId] || {};
+    const prev = bal.currentBalance || 0;
+    await setDoc(doc(db, "clientBalances", ph.clientId), {
+      clientId: ph.clientId, prevBalance: prev,
+      currentBalance: prev + ph.amount,
+      paidAmount: Math.max(0, (bal.paidAmount || 0) - ph.amount),
+      updatedAt: serverTimestamp(),
+    });
+    // 入金履歴を削除
+    await deleteDoc(doc(db, "paymentHistory", ph.id));
+  };
+
   // 1ヶ月以上未入金の請求書を検出
   const oneMonthAgo = new Date();
   oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
@@ -2380,7 +2359,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
           </tbody>
         </table>
       </div>
-      {balTarget && <BalanceModal client={balTarget.client} balance={balTarget.balance} invoices={invoices} onClose={() => setBalTarget(null)} />}
+      {balTarget && <BalanceModal client={balTarget.client} balance={balTarget.balance} onClose={() => setBalTarget(null)} />}
       {reRequestTarget && (() => {
         const cl = reRequestTarget;
         const clOverdue = overdueInvoices.filter(i => i.clientId === cl.id);
@@ -2574,8 +2553,8 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
         (paymentHistory || []).forEach(ph => {
           ledgerEntries.push({
             date: ph.date || "", clientId: ph.clientId, clientName: ph.clientName || "—",
-            type: "payment", description: `入金${(ph.paidInvoices || []).length ? "（" + ph.paidInvoices.join(", ") + "）" : ""}`,
-            debit: 0, credit: ph.amount || 0,
+            type: "payment", description: "入金",
+            debit: 0, credit: ph.amount || 0, phId: ph.id,
           });
         });
         // 日付順ソート
@@ -2609,6 +2588,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
                   <th style={{ ...s.th, textAlign: "right" }}>借方（請求）</th>
                   <th style={{ ...s.th, textAlign: "right" }}>貸方（入金）</th>
                   <th style={{ ...s.th, textAlign: "right" }}>残高</th>
+                  <th style={s.th}>操作</th>
                 </tr></thead>
                 <tbody>
                   {withBalance.slice(-100).map((e, i) => (
@@ -2622,6 +2602,9 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
                       <td style={{ ...s.td, textAlign: "right", color: e.debit ? C.red : "transparent" }}>{e.debit ? `¥${fmt(e.debit)}` : ""}</td>
                       <td style={{ ...s.td, textAlign: "right", color: e.credit ? C.green : "transparent" }}>{e.credit ? `¥${fmt(e.credit)}` : ""}</td>
                       <td style={{ ...s.td, textAlign: "right", fontWeight: 700, color: e.balance > 0 ? C.red : C.green }}>¥{fmt(e.balance)}</td>
+                      <td style={s.td}>{e.type === "payment" && e.phId && (
+                        <button style={{ ...s.btn("red"), padding: "3px 8px", fontSize: 11 }} onClick={() => cancelPayment(paymentHistory.find(p => p.id === e.phId))}>取消</button>
+                      )}</td>
                     </tr>
                   ))}
                 </tbody>
