@@ -2296,6 +2296,31 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
     await deleteDoc(doc(db, "paymentHistory", ph.id));
   };
 
+  // 残高再計算
+  const recalcBalance = async (clientId) => {
+    const bal = balances[clientId] || {};
+    const opening = bal.openingBalance || 0;
+    const invoiceTotal = invoices.filter(i => i.clientId === clientId && i.status === "unpaid").reduce((a, i) => a + (i.total || 0), 0);
+    const paymentTotal = (paymentHistory || []).filter(p => p.clientId === clientId).reduce((a, p) => a + (p.amount || 0), 0);
+    const correct = opening + invoiceTotal - paymentTotal;
+    await setDoc(doc(db, "clientBalances", clientId), {
+      ...bal, clientId,
+      currentBalance: Math.max(0, correct),
+      updatedAt: serverTimestamp(),
+    });
+    return correct;
+  };
+
+  const recalcAll = async () => {
+    if (!confirm("全取引先の残高を再計算しますか？\n\n期首残高＋未収請求書合計−入金合計で再計算されます。")) return;
+    let count = 0;
+    for (const cl of clients) {
+      await recalcBalance(cl.id);
+      count++;
+    }
+    alert(`${count}社の残高を再計算しました`);
+  };
+
   // 1ヶ月以上未入金の請求書を検出
   const oneMonthAgo = new Date();
   oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
@@ -2322,7 +2347,10 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
 
   return (
     <div>
-      <div style={s.pageTitle}>残高管理</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={s.pageTitle}>残高管理</div>
+        <button style={{ ...s.btn("light"), fontSize: 12 }} onClick={recalcAll}>残高再計算</button>
+      </div>
       {/* アラートバナー */}
       {overdueClientIds.length > 0 && (
         <div style={{ background: "#f8d7da", border: `1px solid ${C.red}`, borderRadius: 10, padding: "14px 20px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12 }}>
