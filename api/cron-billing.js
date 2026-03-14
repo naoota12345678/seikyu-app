@@ -161,6 +161,10 @@ export default async function handler(req, res) {
   const results = { closing: [], recurring: [], errors: [] };
 
   try {
+    // 設定を読み取り
+    const settingsSnap0 = await db.collection("settings").limit(1).get();
+    const settings0 = settingsSnap0.empty ? {} : settingsSnap0.docs[0].data();
+
     // 1. 締日処理
     const clientsSnap = await db.collection("clients").get();
     const closingClients = clientsSnap.docs.filter(d => {
@@ -233,14 +237,30 @@ export default async function handler(req, res) {
 
       try {
         const items = [{ name: r.itemName, qty: r.qty || 1, unit: r.unit || "", price: r.price || 0, taxRate: r.taxRate !== undefined ? r.taxRate : 10 }];
-        const result = await createInvoiceAndProcess({
-          clientId: r.clientId, divisionId: r.divisionId || "",
-          items, deliveryRefs: [], deliveryRefItems: [], deliveryIds: [],
-          type: "recurring", sendMode: r.sendMode || "auto",
-          billingDay: r.billingDay || 0,
-        });
-        await recurDoc.ref.update({ lastIssuedMonth: ym });
-        results.recurring.push({ client: r.clientId, item: r.itemName, ...result });
+        if (settings0.recurringApproval) {
+          // 承認待ちに追加
+          const { sub, tax, total } = totalFromItems(items);
+          const clientDoc2 = await db.collection("clients").doc(r.clientId).get();
+          const clientName = clientDoc2.exists ? clientDoc2.data().name || "" : "";
+          await db.collection("pendingBillings").add({
+            type: "invoice", clientId: r.clientId, clientName,
+            divisionId: r.divisionId || "",
+            items, subtotal: sub, tax, total,
+            billingType: "recurring", scheduledSendDate: "",
+            status: "pending", createdAt: FieldValue.serverTimestamp(),
+          });
+          await recurDoc.ref.update({ lastIssuedMonth: ym });
+          results.recurring.push({ client: r.clientId, item: r.itemName, pending: true });
+        } else {
+          const result = await createInvoiceAndProcess({
+            clientId: r.clientId, divisionId: r.divisionId || "",
+            items, deliveryRefs: [], deliveryRefItems: [], deliveryIds: [],
+            type: "recurring", sendMode: r.sendMode || "auto",
+            billingDay: r.billingDay || 0,
+          });
+          await recurDoc.ref.update({ lastIssuedMonth: ym });
+          results.recurring.push({ client: r.clientId, item: r.itemName, ...result });
+        }
       } catch (e) {
         results.errors.push({ recurring: r.itemName, error: e.message });
       }

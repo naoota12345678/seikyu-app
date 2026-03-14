@@ -959,6 +959,19 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
   const [scheduleTarget, setScheduleTarget] = useState(null);
   const [scheduledSendDate, setScheduledSendDate] = useState("");
   const issueInvoice = async (d, sendDate) => {
+    const cl = clients.find(c => c.id === d.clientId);
+    if (company?.invoiceApproval) {
+      // 承認待ちに追加
+      await addDoc(collection(db, "pendingBillings"), {
+        type: "invoice", clientId: d.clientId, clientName: cl?.name || "",
+        divisionId: cl?.divisionId || "", deliveryId: d.id, deliveryDocNo: d.docNo,
+        items: d.items, subtotal: d.subtotal, tax: d.tax, total: d.total,
+        billingType: "immediate", scheduledSendDate: sendDate || "",
+        status: "pending", createdAt: serverTimestamp(),
+      });
+      alert("承認待ちに追加しました。承認後に請求書が発行されます。");
+      return;
+    }
     const inv = {
       docNo: genDocNo("INV", invoices), clientId: d.clientId, date: today(),
       dueDate: nextMonthEnd(d.date), billingType: "immediate",
@@ -1585,6 +1598,21 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
     if (!dels.length) return alert("対象の未請求納品書がありません");
     const allItems = dels.flatMap(d => d.items || []);
     const { sub, tax, total: grandTotal } = totalFromItems(allItems);
+    if (company?.invoiceApproval) {
+      await addDoc(collection(db, "pendingBillings"), {
+        type: "invoice", clientId: client.id, clientName: client.name || "",
+        divisionId: client.divisionId || "",
+        deliveryIds: dels.map(d => d.id), deliveryDocNos: dels.map(d => d.docNo),
+        items: allItems, subtotal: sub, tax, total: grandTotal,
+        billingType: "closing", closingDay: period.closingDay,
+        closingPeriod: { start: period.start, end: period.end },
+        deliveryRefItems: dels.map(d => d.items || []),
+        scheduledSendDate: sendDate || "",
+        status: "pending", createdAt: serverTimestamp(),
+      });
+      alert(`承認待ちに追加しました（${dels.length}件まとめ、${period.label}）`);
+      return;
+    }
     const inv = {
       docNo: genDocNo("INV", invoices), clientId: client.id, date: today(),
       dueDate: nextMonthEnd(period.end), billingType: "closing",
@@ -3501,7 +3529,48 @@ function PendingPage({ clients, company, divisions, balances, isAdmin }) {
     return () => unsub();
   }, []);
 
+  const approveInvoice = async (p) => {
+    const cl = clients.find(c => c.id === p.clientId) || {};
+    if (!confirm(`${cl.name || p.clientName} の請求書（¥${fmt(p.total)}）を発行しますか？`)) return;
+    setSending(p.id);
+    try {
+      const inv = {
+        docNo: genDocNo("INV", []), clientId: p.clientId, date: today(),
+        dueDate: nextMonthEnd(today()), billingType: p.billingType || "immediate",
+        items: p.items, subtotal: p.subtotal, tax: p.tax, total: p.total,
+        status: "unpaid", createdAt: serverTimestamp(),
+      };
+      if (p.billingType === "closing") {
+        inv.closingDay = p.closingDay;
+        inv.closingPeriod = p.closingPeriod;
+        inv.deliveryRefs = p.deliveryDocNos || [];
+        inv.deliveryRefItems = p.deliveryRefItems || [];
+      } else {
+        inv.deliveryRef = p.deliveryDocNo || "";
+        inv.deliveryRefs = p.deliveryDocNo ? [p.deliveryDocNo] : [];
+      }
+      if (p.scheduledSendDate) { inv.scheduledSendDate = p.scheduledSendDate; inv.sentStatus = "scheduled"; }
+      const invRef = await addDoc(collection(db, "invoices"), inv);
+      // 納品書をinvoiced状態に
+      const delIds = p.deliveryIds ? (Array.isArray(p.deliveryIds) ? p.deliveryIds : [p.deliveryIds]) : (p.deliveryId ? [p.deliveryId] : []);
+      for (const did of delIds) {
+        await updateDoc(doc(db, "deliveries", did), { status: "invoiced", invoiceId: invRef.id });
+      }
+      // 残高更新
+      const bal = balances[p.clientId] || {};
+      await setDoc(doc(db, "clientBalances", p.clientId), {
+        clientId: p.clientId, prevBalance: bal.currentBalance || 0,
+        currentBalance: (bal.currentBalance || 0) + p.total,
+        paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
+      });
+      await updateDoc(doc(db, "pendingBillings", p.id), { status: "approved", approvedAt: serverTimestamp(), invoiceDocNo: inv.docNo });
+      alert(`請求書 ${inv.docNo} を発行しました`);
+    } catch (e) { alert("エラー: " + e.message); }
+    setSending(null);
+  };
+
   const approve = async (p, sendMethod) => {
+    if (p.type === "invoice") return approveInvoice(p);
     const cl = clients.find(c => c.id === p.clientId) || {};
     const email = p.email || cl.email;
     if (!email) return alert("取引先のメールアドレスが設定されていません");
@@ -3604,16 +3673,20 @@ function PendingPage({ clients, company, divisions, balances, isAdmin }) {
                 const cl = clients.find(c => c.id === p.clientId);
                 return (
                   <tr key={p.id}>
-                    <td style={s.td}>{p.invoiceDocNo}</td>
+                    <td style={s.td}>{p.invoiceDocNo || (p.type === "invoice" ? <span style={{ color: C.gray }}>（承認後発行）</span> : "—")}</td>
                     <td style={s.td}>{cl?.name || "—"}{cl?.email ? "" : <span style={{ fontSize: 11, color: C.red, marginLeft: 6 }}>※メール未設定</span>}</td>
                     <td style={s.td}>¥{fmt(p.total)}</td>
-                    <td style={s.td}><span style={s.badge(p.type==="recurring"?"blue":p.type==="re-request-email"?"red":p.type==="re-request-stripe"?"red":"gold")}>{p.type==="recurring"?"定期":p.type==="re-request-email"?"✉再請求":p.type==="re-request-stripe"?"💳Stripe":"締日"}</span></td>
+                    <td style={s.td}><span style={s.badge(p.type==="invoice"?"navy":p.type==="recurring"?"blue":p.type==="re-request-email"?"red":p.type==="re-request-stripe"?"red":"gold")}>{p.type==="invoice"?"請求書発行":p.type==="recurring"?"定期":p.type==="re-request-email"?"✉再請求":p.type==="re-request-stripe"?"💳Stripe":"締日"}</span></td>
                     <td style={s.td}>{p.createdAt?.toDate?.()?.toLocaleDateString?.() || "—"}</td>
                     <td style={s.td}>
                       {isAdmin ? (
                         <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                          <button style={{ ...s.btn("green"), padding: "4px 10px", fontSize: 12 }} onClick={() => approve(p, "email")} disabled={!!sending}>{sending===p.id ? "送信中..." : "✉ メール送信"}</button>
-                          {company?.stripeSecretKey && <button style={{ ...s.btn("primary"), padding: "4px 10px", fontSize: 12, background: "#635BFF" }} onClick={() => approve(p, "stripe")} disabled={!!sending}>{sending===p.id ? "処理中..." : "💳 Stripe送信"}</button>}
+                          {p.type === "invoice" ? (
+                            <button style={{ ...s.btn("green"), padding: "4px 10px", fontSize: 12 }} onClick={() => approveInvoice(p)} disabled={!!sending}>{sending===p.id ? "発行中..." : "承認・発行"}</button>
+                          ) : <>
+                            <button style={{ ...s.btn("green"), padding: "4px 10px", fontSize: 12 }} onClick={() => approve(p, "email")} disabled={!!sending}>{sending===p.id ? "送信中..." : "✉ メール送信"}</button>
+                            {company?.stripeSecretKey && <button style={{ ...s.btn("primary"), padding: "4px 10px", fontSize: 12, background: "#635BFF" }} onClick={() => approve(p, "stripe")} disabled={!!sending}>{sending===p.id ? "処理中..." : "💳 Stripe送信"}</button>}
+                          </>}
                           <button style={{ ...s.btn("red"), padding: "4px 10px", fontSize: 12 }} onClick={() => reject(p)}>却下</button>
                         </div>
                       ) : (
@@ -3639,10 +3712,10 @@ function PendingPage({ clients, company, divisions, balances, isAdmin }) {
                 const cl = clients.find(c => c.id === p.clientId);
                 return (
                   <tr key={p.id}>
-                    <td style={s.td}>{p.invoiceDocNo}</td>
+                    <td style={s.td}>{p.invoiceDocNo || (p.type === "invoice" ? <span style={{ color: C.gray }}>（承認後発行）</span> : "—")}</td>
                     <td style={s.td}>{cl?.name || "—"}</td>
                     <td style={s.td}>¥{fmt(p.total)}</td>
-                    <td style={s.td}><span style={s.badge(p.type==="recurring"?"blue":p.type==="re-request-email"?"red":p.type==="re-request-stripe"?"red":"gold")}>{p.type==="recurring"?"定期":p.type==="re-request-email"?"✉再請求":p.type==="re-request-stripe"?"💳Stripe":"締日"}</span></td>
+                    <td style={s.td}><span style={s.badge(p.type==="invoice"?"navy":p.type==="recurring"?"blue":p.type==="re-request-email"?"red":p.type==="re-request-stripe"?"red":"gold")}>{p.type==="invoice"?"請求書発行":p.type==="recurring"?"定期":p.type==="re-request-email"?"✉再請求":p.type==="re-request-stripe"?"💳Stripe":"締日"}</span></td>
                     <td style={s.td}><span style={s.badge(p.status==="approved"?"green":"red")}>{p.status==="approved"?"承認済":"却下"}</span></td>
                   </tr>
                 );
@@ -3766,8 +3839,22 @@ function SettingsPage({ company, setCompany, isAdmin, currentUser }) {
         </div>
       </div>
       <div style={s.card}>
-        <h3 style={{margin:"0 0 16px",color:C.navy}}>再請求設定</h3>
-        <div style={s.row}>
+        <h3 style={{margin:"0 0 16px",color:C.navy}}>承認設定</h3>
+        <div style={{ ...s.col, gap: 12 }}>
+          <div style={s.col}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+              <input type="checkbox" checked={form.invoiceApproval === true} onChange={e => setF("invoiceApproval", e.target.checked)} />
+              <span style={{ fontSize: 13 }}>請求書発行時に承認を必要とする</span>
+            </label>
+            <div style={{ fontSize: 11, color: C.gray, marginTop: 4 }}>ONにすると、手動の請求書発行が承認待ちに入ります</div>
+          </div>
+          <div style={s.col}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+              <input type="checkbox" checked={form.recurringApproval === true} onChange={e => setF("recurringApproval", e.target.checked)} />
+              <span style={{ fontSize: 13 }}>定期請求の発行時に承認を必要とする</span>
+            </label>
+            <div style={{ fontSize: 11, color: C.gray, marginTop: 4 }}>ONにすると、cron自動発行の定期請求も承認待ちに入ります</div>
+          </div>
           <div style={s.col}>
             <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
               <input type="checkbox" checked={form.reRequestApproval !== false} onChange={e => setF("reRequestApproval", e.target.checked)} />
