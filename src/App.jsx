@@ -925,7 +925,9 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
     return cn.includes(search) || (d.docNo || "").includes(search);
   });
   const deleteD = async (id) => { if (confirm("削除しますか？")) await deleteDoc(doc(db, "deliveries", id)); };
-  const issueInvoice = async (d) => {
+  const [scheduleTarget, setScheduleTarget] = useState(null);
+  const [scheduledSendDate, setScheduledSendDate] = useState("");
+  const issueInvoice = async (d, sendDate) => {
     const inv = {
       docNo: genDocNo("INV", invoices), clientId: d.clientId, date: today(),
       dueDate: nextMonthEnd(d.date), billingType: "immediate",
@@ -933,6 +935,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
       items: d.items, subtotal: d.subtotal, tax: d.tax, total: d.total,
       status: "unpaid", createdAt: serverTimestamp(),
     };
+    if (sendDate) { inv.scheduledSendDate = sendDate; inv.sentStatus = "scheduled"; }
     const invRef = await addDoc(collection(db, "invoices"), inv);
     await updateDoc(doc(db, "deliveries", d.id), { status: "invoiced", invoiceId: invRef.id });
     const bal = balances[d.clientId] || {};
@@ -941,6 +944,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
       currentBalance: (bal.currentBalance || 0) + d.total,
       paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
     });
+    alert(sendDate ? `請求書を発行しました（${sendDate} に自動送信予定）` : "請求書を発行しました");
   };
   return (
     <div>
@@ -968,7 +972,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
                       <button style={{ ...s.btn("light"), padding: "4px 8px", fontSize: 12 }} onClick={() => { setEditing(d); setShowForm(true); }}>編集</button>
                       <button style={{ ...s.btn("light"), padding: "4px 8px", fontSize: 12 }} onClick={() => setPrintTarget({ delivery: d, invoice: invoices.find(i => i.deliveryRef === d.docNo) })}>🖨 印刷</button>
                       {d.status !== "invoiced" && client?.billingType !== "closing" && client?.billingType !== "monthly" && (
-                        <button style={{ ...s.btn("gold"), padding: "4px 8px", fontSize: 12 }} onClick={() => issueInvoice(d)}>請求書発行</button>
+                        <button style={{ ...s.btn("gold"), padding: "4px 8px", fontSize: 12 }} onClick={() => { setScheduleTarget(d); setScheduledSendDate(""); }}>請求書発行</button>
                       )}
                       {isAdmin && <button style={{ ...s.btn("red"), padding: "4px 8px", fontSize: 12 }} onClick={() => deleteD(d.id)}>削除</button>}
                     </div>
@@ -983,6 +987,33 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
         onSave={() => setShowForm(false)} onClose={() => setShowForm(false)} />}
       {printTarget && <PrintModeModal invoice={printTarget.invoice} delivery={printTarget.delivery}
         clients={clients} company={company} balances={balances} divisions={divisions} onClose={() => setPrintTarget(null)} />}
+      {scheduleTarget && (() => {
+        const d = scheduleTarget;
+        const cl = clients.find(c => c.id === d.clientId);
+        return (
+          <div style={s.modal} onClick={() => setScheduleTarget(null)}>
+            <div style={{ ...s.modalBox, maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+              <h3 style={{ margin: "0 0 16px", color: C.navy }}>請求書発行</h3>
+              <div style={{ background: C.pale, padding: 14, borderRadius: 8, marginBottom: 16, fontSize: 13 }}>
+                <strong>{cl?.name}</strong>　{d.docNo}　¥{fmt(d.total)}
+              </div>
+              <div style={{ ...s.col, gap: 12, marginBottom: 20 }}>
+                <div style={s.col}>
+                  <span style={s.label}>送信予定日（空欄＝送信しない）</span>
+                  <input type="date" style={s.input} value={scheduledSendDate} onChange={e => setScheduledSendDate(e.target.value)} min={today()} />
+                  <span style={{ fontSize: 11, color: C.gray, marginTop: 4 }}>設定した日付にメールで自動送信されます</span>
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <button style={s.btn("light")} onClick={() => setScheduleTarget(null)}>キャンセル</button>
+                <button style={s.btn("primary")} onClick={() => { issueInvoice(d, scheduledSendDate); setScheduleTarget(null); }}>
+                  {scheduledSendDate ? "発行して送信予約" : "今すぐ発行"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -1317,6 +1348,8 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
                   <td style={s.td}>
                     {inv.sentStatus === "sent"
                       ? <span style={s.badge("blue")}>送信済</span>
+                      : inv.sentStatus === "scheduled"
+                      ? <span style={s.badge("gold")}>{inv.scheduledSendDate} 予約</span>
                       : <span style={s.badge("gray")}>未送信</span>}
                   </td>
                   <td style={s.td}>
@@ -1506,10 +1539,12 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
 function MonthlyBilling({ clients, deliveries, invoices, company, balances, divisions }) {
   const [month, setMonth] = useState(today().slice(0, 7));
   const [printTarget, setPrintTarget] = useState(null);
+  const [scheduleTarget, setScheduleTarget] = useState(null);
+  const [scheduledSendDate, setScheduledSendDate] = useState("");
   // 締日タイプの取引先（旧monthly互換含む）
   const closingClients = clients.filter(c => c.billingType === "closing" || c.billingType === "monthly");
 
-  const issueClosing = async (client, period) => {
+  const issueClosing = async (client, period, sendDate) => {
     const dels = deliveries.filter(d =>
       d.clientId === client.id && d.status !== "invoiced" &&
       d.date >= period.start && d.date <= period.end
@@ -1526,6 +1561,7 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
       items: allItems, subtotal: sub, tax, total: grandTotal,
       status: "unpaid", createdAt: serverTimestamp(),
     };
+    if (sendDate) { inv.scheduledSendDate = sendDate; inv.sentStatus = "scheduled"; }
     const batch = writeBatch(db);
     const invRef = doc(collection(db, "invoices"));
     batch.set(invRef, inv);
@@ -1537,7 +1573,7 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
       currentBalance: (bal.currentBalance || 0) + sub + tax,
       paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
     });
-    alert(`請求書を発行しました（${dels.length}件まとめ、${period.label}）`);
+    alert(sendDate ? `請求書を発行しました（${dels.length}件まとめ、${sendDate} に自動送信予定）` : `請求書を発行しました（${dels.length}件まとめ、${period.label}）`);
   };
 
   return (
@@ -1580,7 +1616,7 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
                       <span style={{ fontSize: 13, color: C.gray }}>未請求：{unissued.length}件　¥{fmt(unissuedTotal)}</span>
                       {existInv
                         ? <button style={{ ...s.btn("light"), padding: "6px 12px", fontSize: 12 }} onClick={() => setPrintTarget({ invoice: existInv })}>🖨 発行済み請求書</button>
-                        : <button style={{ ...s.btn("gold"), padding: "6px 12px", fontSize: 12 }} onClick={() => issueClosing(client, period)} disabled={!unissued.length}>請求書発行</button>
+                        : <button style={{ ...s.btn("gold"), padding: "6px 12px", fontSize: 12 }} onClick={() => { setScheduleTarget({ client, period }); setScheduledSendDate(""); }} disabled={!unissued.length}>請求書発行</button>
                       }
                     </div>
                   </div>
@@ -1606,6 +1642,34 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
       {!closingClients.length && <div style={{ ...s.card, color: C.gray, textAlign: "center" }}>締日設定のある取引先がありません（取引先管理で「締日請求」に変更してください）</div>}
       {printTarget && <PrintModeModal invoice={printTarget.invoice} delivery={null}
         clients={clients} company={company} balances={balances} divisions={divisions} onClose={() => setPrintTarget(null)} />}
+      {scheduleTarget && (() => {
+        const { client, period } = scheduleTarget;
+        const dels = deliveries.filter(d => d.clientId === client.id && d.status !== "invoiced" && d.date >= period.start && d.date <= period.end);
+        const { total: unissuedTotal } = totalFromItems(dels.flatMap(d => d.items || []));
+        return (
+          <div style={s.modal} onClick={() => setScheduleTarget(null)}>
+            <div style={{ ...s.modalBox, maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+              <h3 style={{ margin: "0 0 16px", color: C.navy }}>請求書発行</h3>
+              <div style={{ background: C.pale, padding: 14, borderRadius: 8, marginBottom: 16, fontSize: 13 }}>
+                <strong>{client.name}</strong>　{period.label}　{dels.length}件　¥{fmt(unissuedTotal)}
+              </div>
+              <div style={{ ...s.col, gap: 12, marginBottom: 20 }}>
+                <div style={s.col}>
+                  <span style={s.label}>送信予定日（空欄＝送信しない）</span>
+                  <input type="date" style={s.input} value={scheduledSendDate} onChange={e => setScheduledSendDate(e.target.value)} min={today()} />
+                  <span style={{ fontSize: 11, color: C.gray, marginTop: 4 }}>設定した日付にメールで自動送信されます</span>
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <button style={s.btn("light")} onClick={() => setScheduleTarget(null)}>キャンセル</button>
+                <button style={s.btn("primary")} onClick={() => { issueClosing(client, period, scheduledSendDate); setScheduleTarget(null); }}>
+                  {scheduledSendDate ? "発行して送信予約" : "今すぐ発行"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

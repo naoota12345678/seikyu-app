@@ -245,6 +245,62 @@ export default async function handler(req, res) {
         results.errors.push({ recurring: r.itemName, error: e.message });
       }
     }
+    // 3. 送信予定日の請求書を自動送信
+    results.scheduled = [];
+    const invSnap = await db.collection("invoices")
+      .where("sentStatus", "==", "scheduled")
+      .where("scheduledSendDate", "==", todayStr())
+      .get();
+
+    for (const invDoc of invSnap.docs) {
+      const inv = { id: invDoc.id, ...invDoc.data() };
+      try {
+        const clientDoc = await db.collection("clients").doc(inv.clientId).get();
+        const client = clientDoc.exists ? clientDoc.data() : {};
+        if (!client.email) {
+          results.errors.push({ scheduled: inv.docNo, error: "メールアドレス未設定" });
+          continue;
+        }
+
+        const settingsSnap2 = await db.collection("settings").limit(1).get();
+        const company2 = settingsSnap2.empty ? {} : settingsSnap2.docs[0].data();
+        let co2 = company2;
+        if (inv.divisionId) {
+          const divDoc = await db.collection("divisions").doc(inv.divisionId).get();
+          if (divDoc.exists) {
+            const div = divDoc.data();
+            co2 = { ...company2, ...Object.fromEntries(Object.entries(div).filter(([,v]) => v)) };
+          }
+        }
+
+        const sent = await sendEmail(client.email,
+          `【請求書】${inv.docNo} ${co2.name || ""}`,
+          `<div style="font-family:sans-serif;color:#333;">
+            <p>${client.name || ""} 御中</p>
+            <p>いつもお世話になっております。<br>${co2.name || ""}です。</p>
+            <p>請求書（${inv.docNo}）をお送りいたします。</p>
+            <p>金額：&yen;${(inv.total || 0).toLocaleString()}</p>
+            <p>ご確認のほど、よろしくお願いいたします。</p>
+            <hr style="border:none;border-top:1px solid #ddd;margin:20px 0">
+            <p style="font-size:12px;color:#888">${co2.name || ""}<br>${co2.address || ""}<br>TEL ${co2.tel || ""}</p>
+          </div>`
+        );
+        if (sent) {
+          await invDoc.ref.update({ sentStatus: "sent", lastSentAt: FieldValue.serverTimestamp() });
+          await db.collection("sendHistory").add({
+            docNo: inv.docNo, invoiceId: inv.id, clientId: inv.clientId,
+            clientName: client.name || "", email: client.email,
+            method: "auto", memo: "送信予定日による自動送信",
+            amount: inv.total || 0, sentAt: FieldValue.serverTimestamp(), sentBy: "scheduled",
+          });
+          results.scheduled.push({ docNo: inv.docNo, client: client.name });
+        } else {
+          results.errors.push({ scheduled: inv.docNo, error: "メール送信失敗" });
+        }
+      } catch (e) {
+        results.errors.push({ scheduled: inv.docNo, error: e.message });
+      }
+    }
   } catch (e) {
     results.errors.push({ fatal: e.message });
   }
