@@ -4115,6 +4115,7 @@ export default function App() {
   const [user, setUser] = useState(undefined); // undefined=checking, null=not logged in, object=logged in
   const [userRole, setUserRole] = useState(null); // "admin" | "staff"
   const [page, setPage] = useState("dashboard");
+  const [openGroups, setOpenGroups] = useState({});
   const [clients, setClients] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
   const [invoices, setInvoices] = useState([]);
@@ -4182,7 +4183,6 @@ export default function App() {
 
   const isAdmin = userRole === "admin";
 
-  const [openGroups, setOpenGroups] = useState({});
   const toggleGroup = (g) => setOpenGroups(prev => ({ ...prev, [g]: !prev[g] }));
   const nav = [
     { id: "dashboard", label: "📊 ダッシュボード" },
