@@ -1409,9 +1409,10 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
                           )}
                         </span>
                       )}
-                      {inv.status !== "paid" && (
+                      {inv.status !== "paid" && <>
+                        <button style={{ ...s.btn("green"), padding: "4px 8px", fontSize: 12 }} onClick={() => { if (confirm(`${inv.docNo} を消込（入金済）にしますか？\n※ 残高は変動しません`)) updateDoc(doc(db, "invoices", inv.id), { status: "paid", paidAt: today() }); }}>消込</button>
                         <button style={{ ...s.btn("gold"), padding: "4px 8px", fontSize: 12 }} onClick={() => setBalTarget({ client, balance: bal })}>入金記録</button>
-                      )}
+                      </>}
                       {isAdmin && <button style={{ ...s.btn("red"), padding: "4px 8px", fontSize: 12 }} onClick={() => del(inv.id)}>削除</button>}
                     </div>
                   </td>
