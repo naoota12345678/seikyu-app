@@ -114,6 +114,30 @@ function getAllClosingPeriods(yearMonth, closingDays) {
   return periods;
 }
 
+// 次回の締日日付を計算（今日以降で最も近い締日）
+function getNextClosingDate(closingDays) {
+  if (!closingDays || !closingDays.length) return "";
+  const now = new Date();
+  const todayDay = now.getDate();
+  const y = now.getFullYear(), m = now.getMonth();
+  const pad = (n) => String(n).padStart(2, "0");
+  const sorted = [...closingDays].sort((a, b) => (a === 0 ? 32 : a) - (b === 0 ? 32 : b));
+  // 今月の残り締日を探す
+  for (const cd of sorted) {
+    const lastDay = new Date(y, m + 1, 0).getDate();
+    const day = cd === 0 ? lastDay : Math.min(cd, lastDay);
+    if (day >= todayDay) return `${y}-${pad(m + 1)}-${pad(day)}`;
+  }
+  // 今月にない場合は来月の最初の締日
+  const nm = m + 1;
+  const ny = nm > 11 ? y + 1 : y;
+  const nmm = nm > 11 ? 0 : nm;
+  const lastDay = new Date(ny, nmm + 1, 0).getDate();
+  const cd = sorted[0];
+  const day = cd === 0 ? lastDay : Math.min(cd, lastDay);
+  return `${ny}-${pad(nmm + 1)}-${pad(day)}`;
+}
+
 const s = {
   app: { display: "flex", minHeight: "100vh", fontFamily: "'Noto Sans JP', sans-serif", background: C.cream },
   sidebar: { width: 220, background: C.navy, color: C.white, display: "flex", flexDirection: "column", padding: "0 0 24px 0", flexShrink: 0 },
@@ -1005,24 +1029,36 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
       {scheduleTarget && (() => {
         const d = scheduleTarget;
         const cl = clients.find(c => c.id === d.clientId);
+        const isClosing = cl?.billingType === "closing" || cl?.billingType === "monthly";
+        const closingDate = isClosing ? getNextClosingDate(cl?.closingDays || [0]) : "";
+        const sendDate = isClosing ? closingDate : scheduledSendDate;
         return (
           <div style={s.modal} onClick={() => setScheduleTarget(null)}>
             <div style={{ ...s.modalBox, maxWidth: 420 }} onClick={e => e.stopPropagation()}>
               <h3 style={{ margin: "0 0 16px", color: C.navy }}>請求書発行</h3>
               <div style={{ background: C.pale, padding: 14, borderRadius: 8, marginBottom: 16, fontSize: 13 }}>
                 <strong>{cl?.name}</strong>　{d.docNo}　¥{fmt(d.total)}
+                {isClosing && <div style={{ marginTop: 4, color: C.navy }}>{closingDaysLabel(cl?.closingDays || [0])}</div>}
               </div>
               <div style={{ ...s.col, gap: 12, marginBottom: 20 }}>
-                <div style={s.col}>
-                  <span style={s.label}>送信予定日（空欄＝送信しない）</span>
-                  <input type="date" style={s.input} value={scheduledSendDate} onChange={e => setScheduledSendDate(e.target.value)} min={today()} />
-                  <span style={{ fontSize: 11, color: C.gray, marginTop: 4 }}>設定した日付にメールで自動送信されます</span>
-                </div>
+                {isClosing ? (
+                  <div style={s.col}>
+                    <span style={s.label}>送信予定日（締日から自動設定）</span>
+                    <input type="date" style={{ ...s.input, background: "#f0f0f0" }} value={closingDate} readOnly />
+                    <span style={{ fontSize: 11, color: C.gray, marginTop: 4 }}>次回の締日に自動送信されます</span>
+                  </div>
+                ) : (
+                  <div style={s.col}>
+                    <span style={s.label}>送信予定日（空欄＝送信しない）</span>
+                    <input type="date" style={s.input} value={scheduledSendDate} onChange={e => setScheduledSendDate(e.target.value)} min={today()} />
+                    <span style={{ fontSize: 11, color: C.gray, marginTop: 4 }}>設定した日付にメールで自動送信されます</span>
+                  </div>
+                )}
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
                 <button style={s.btn("light")} onClick={() => setScheduleTarget(null)}>キャンセル</button>
-                <button style={s.btn("primary")} onClick={() => { issueInvoice(d, scheduledSendDate); setScheduleTarget(null); }}>
-                  {scheduledSendDate ? "発行して送信予約" : "今すぐ発行"}
+                <button style={s.btn("primary")} onClick={() => { issueInvoice(d, sendDate); setScheduleTarget(null); }}>
+                  {sendDate ? "発行して送信予約" : "今すぐ発行"}
                 </button>
               </div>
             </div>
@@ -1661,24 +1697,26 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
         const { client, period } = scheduleTarget;
         const dels = deliveries.filter(d => d.clientId === client.id && d.status !== "invoiced" && d.date >= period.start && d.date <= period.end);
         const { total: unissuedTotal } = totalFromItems(dels.flatMap(d => d.items || []));
+        const closingDate = getNextClosingDate(client.closingDays || [0]);
         return (
           <div style={s.modal} onClick={() => setScheduleTarget(null)}>
             <div style={{ ...s.modalBox, maxWidth: 420 }} onClick={e => e.stopPropagation()}>
               <h3 style={{ margin: "0 0 16px", color: C.navy }}>請求書発行</h3>
               <div style={{ background: C.pale, padding: 14, borderRadius: 8, marginBottom: 16, fontSize: 13 }}>
                 <strong>{client.name}</strong>　{period.label}　{dels.length}件　¥{fmt(unissuedTotal)}
+                <div style={{ marginTop: 4, color: C.navy }}>{closingDaysLabel(client.closingDays || [0])}</div>
               </div>
               <div style={{ ...s.col, gap: 12, marginBottom: 20 }}>
                 <div style={s.col}>
-                  <span style={s.label}>送信予定日（空欄＝送信しない）</span>
-                  <input type="date" style={s.input} value={scheduledSendDate} onChange={e => setScheduledSendDate(e.target.value)} min={today()} />
-                  <span style={{ fontSize: 11, color: C.gray, marginTop: 4 }}>設定した日付にメールで自動送信されます</span>
+                  <span style={s.label}>送信予定日（締日から自動設定）</span>
+                  <input type="date" style={{ ...s.input, background: "#f0f0f0" }} value={closingDate} readOnly />
+                  <span style={{ fontSize: 11, color: C.gray, marginTop: 4 }}>締日に自動送信されます</span>
                 </div>
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
                 <button style={s.btn("light")} onClick={() => setScheduleTarget(null)}>キャンセル</button>
-                <button style={s.btn("primary")} onClick={() => { issueClosing(client, period, scheduledSendDate); setScheduleTarget(null); }}>
-                  {scheduledSendDate ? "発行して送信予約" : "今すぐ発行"}
+                <button style={s.btn("primary")} onClick={() => { issueClosing(client, period, closingDate); setScheduleTarget(null); }}>
+                  発行して送信予約
                 </button>
               </div>
             </div>
