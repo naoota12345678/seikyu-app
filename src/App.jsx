@@ -539,20 +539,35 @@ function PrintModeModal({ invoice, delivery, clients, company, balances, divisio
 }
 
 // ── Balance Modal ────────────────────────────────────────────────────────────
-function BalanceModal({ client, balance, onClose }) {
+function BalanceModal({ client, balance, onClose, invoices }) {
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(today());
   const save = async () => {
     const n = Number(amount);
     if (!n || n <= 0) return alert("金額を入力してください");
     const prev = balance?.currentBalance || 0;
+    const newBalance = Math.max(0, prev - n);
     await setDoc(doc(db, "clientBalances", client.id), {
       clientId: client.id, prevBalance: prev,
-      currentBalance: Math.max(0, prev - n),
+      currentBalance: newBalance,
       paidAmount: (balance?.paidAmount || 0) + n,
       lastPaidDate: date, lastPaidAmount: n,
       updatedAt: serverTimestamp(),
     });
+    // 入金額で未払い請求書を古い順にpaidにする
+    if (invoices) {
+      const unpaid = invoices
+        .filter(i => i.clientId === client.id && i.status === "unpaid")
+        .sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+      let remaining = n;
+      for (const inv of unpaid) {
+        if (remaining <= 0) break;
+        if (remaining >= (inv.total || 0)) {
+          await updateDoc(doc(db, "invoices", inv.id), { status: "paid", paidAt: date });
+          remaining -= (inv.total || 0);
+        }
+      }
+    }
     onClose();
   };
   return (
@@ -1391,7 +1406,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
       </div>
       {printTarget && <PrintModeModal invoice={printTarget.invoice} delivery={printTarget.delivery}
         clients={clients} company={company} balances={balances} divisions={divisions} onClose={() => setPrintTarget(null)} />}
-      {balTarget && <BalanceModal client={balTarget.client} balance={balTarget.balance} onClose={() => setBalTarget(null)} />}
+      {balTarget && <BalanceModal client={balTarget.client} balance={balTarget.balance} invoices={invoices} onClose={() => setBalTarget(null)} />}
       {sendTarget && <SendRecordModal invoice={sendTarget} clients={clients} company={company} divisions={divisions} balances={balances} onClose={() => setSendTarget(null)} />}
       {resendTarget && <ResendModal invoice={resendTarget} clients={clients} company={company} divisions={divisions} balances={balances} onClose={() => setResendTarget(null)} />}
       {reRequestTarget && (() => {
@@ -2309,7 +2324,7 @@ function BalancePage({ clients, invoices, balances, company }) {
           </tbody>
         </table>
       </div>
-      {balTarget && <BalanceModal client={balTarget.client} balance={balTarget.balance} onClose={() => setBalTarget(null)} />}
+      {balTarget && <BalanceModal client={balTarget.client} balance={balTarget.balance} invoices={invoices} onClose={() => setBalTarget(null)} />}
       {reRequestTarget && (() => {
         const cl = reRequestTarget;
         const clOverdue = overdueInvoices.filter(i => i.clientId === cl.id);
