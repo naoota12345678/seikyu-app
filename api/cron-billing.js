@@ -49,6 +49,18 @@ function isTodayClosingDay(closingDay) {
   return todayDay === closingDay;
 }
 
+function isTodayNDaysBefore(closingDay, n) {
+  const d = new Date();
+  const y = d.getFullYear(), m = d.getMonth();
+  const lastDay = new Date(y, m + 1, 0).getDate();
+  const targetDay = closingDay === 0 ? lastDay : Math.min(closingDay, lastDay);
+  // 当月の発行日からn日前
+  const targetDate = new Date(y, m, targetDay);
+  const checkDate = new Date(targetDate);
+  checkDate.setDate(checkDate.getDate() - n);
+  return d.getDate() === checkDate.getDate() && d.getMonth() === checkDate.getMonth() && d.getFullYear() === checkDate.getFullYear();
+}
+
 function getClosingPeriod(closingDay) {
   const now = new Date();
   const y = now.getFullYear(), m = now.getMonth() + 1;
@@ -193,16 +205,33 @@ export default async function handler(req, res) {
 
         try {
           const allItems = dels.flatMap(d => d.data().items || []);
-          const result = await createInvoiceAndProcess({
-            clientId: client.id, divisionId: client.divisionId || "",
-            items: allItems,
-            deliveryRefs: dels.map(d => d.data().docNo),
-            deliveryRefItems: dels.map(d => d.data().items || []),
-            deliveryIds: dels.map(d => d.id),
-            type: "closing", sendMode: client.sendMode || "manual",
-            billingDay: cd,
-          });
-          results.closing.push({ client: client.name, ...result });
+          if (settings0.invoiceApproval) {
+            // 承認モード: 締日当日に承認待ちに追加
+            const { sub, tax, total } = totalFromItems(allItems);
+            await db.collection("pendingBillings").add({
+              type: "invoice", clientId: client.id, clientName: client.name || "",
+              divisionId: client.divisionId || "",
+              deliveryIds: dels.map(d => d.id), deliveryDocNos: dels.map(d => d.data().docNo),
+              items: allItems, subtotal: sub, tax, total,
+              billingType: "closing", closingDay: cd,
+              closingPeriod: { start: period.start, end: period.end },
+              deliveryRefItems: dels.map(d => d.data().items || []),
+              scheduledSendDate: "",
+              status: "pending", createdAt: FieldValue.serverTimestamp(),
+            });
+            results.closing.push({ client: client.name, pending: true });
+          } else {
+            const result = await createInvoiceAndProcess({
+              clientId: client.id, divisionId: client.divisionId || "",
+              items: allItems,
+              deliveryRefs: dels.map(d => d.data().docNo),
+              deliveryRefItems: dels.map(d => d.data().items || []),
+              deliveryIds: dels.map(d => d.id),
+              type: "closing", sendMode: client.sendMode || "manual",
+              billingDay: cd,
+            });
+            results.closing.push({ client: client.name, ...result });
+          }
         } catch (e) {
           results.errors.push({ client: client.name, error: e.message });
         }
@@ -233,25 +262,32 @@ export default async function handler(req, res) {
         if (diff % 3 !== 0) continue;
       }
 
-      if (!isTodayClosingDay(r.billingDay || 0)) continue;
-
       try {
         const items = [{ name: r.itemName, qty: r.qty || 1, unit: r.unit || "", price: r.price || 0, taxRate: r.taxRate !== undefined ? r.taxRate : 10 }];
         if (settings0.recurringApproval) {
-          // 承認待ちに追加
+          // 承認モード: 発行日の10日前に承認待ちに追加
+          if (!isTodayNDaysBefore(r.billingDay || 0, 10)) continue;
           const { sub, tax, total } = totalFromItems(items);
           const clientDoc2 = await db.collection("clients").doc(r.clientId).get();
           const clientName = clientDoc2.exists ? clientDoc2.data().name || "" : "";
+          // 発行予定日を計算
+          const now = new Date();
+          const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+          const bd = (r.billingDay || 0) === 0 ? lastDay : Math.min(r.billingDay, lastDay);
+          const billingDate = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(bd).padStart(2,"0")}`;
           await db.collection("pendingBillings").add({
             type: "invoice", clientId: r.clientId, clientName,
             divisionId: r.divisionId || "",
             items, subtotal: sub, tax, total,
-            billingType: "recurring", scheduledSendDate: "",
+            billingType: "recurring", scheduledSendDate: billingDate,
+            billingDay: r.billingDay || 0,
             status: "pending", createdAt: FieldValue.serverTimestamp(),
           });
           await recurDoc.ref.update({ lastIssuedMonth: ym });
-          results.recurring.push({ client: r.clientId, item: r.itemName, pending: true });
+          results.recurring.push({ client: r.clientId, item: r.itemName, pending: true, billingDate });
         } else {
+          // 通常モード: 発行日当日に即発行
+          if (!isTodayClosingDay(r.billingDay || 0)) continue;
           const result = await createInvoiceAndProcess({
             clientId: r.clientId, divisionId: r.divisionId || "",
             items, deliveryRefs: [], deliveryRefItems: [], deliveryIds: [],
