@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { db, storage } from "./firebase";
+import { db, storage, auth } from "./firebase";
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import {
   collection, addDoc, getDocs, doc, updateDoc, deleteDoc,
   onSnapshot, query, orderBy, serverTimestamp, writeBatch, setDoc
@@ -3407,8 +3408,52 @@ function SettingsPage({ company, setCompany }) {
   );
 }
 
+// ── Login ─────────────────────────────────────────────────────────────────────
+function LoginPage({ onLogin }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setError(""); setLoading(true);
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+      onLogin?.();
+    } catch (err) {
+      const msgs = { "auth/invalid-credential": "メールアドレスまたはパスワードが正しくありません", "auth/too-many-requests": "ログイン試行回数が多すぎます。しばらくしてからお試しください", "auth/user-not-found": "アカウントが見つかりません", "auth/wrong-password": "パスワードが正しくありません" };
+      setError(msgs[err.code] || "ログインエラー: " + err.message);
+    }
+    setLoading(false);
+  };
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg, ${C.navy} 0%, #2a3f6a 100%)` }}>
+      <form onSubmit={handleLogin} style={{ background: "white", borderRadius: 16, padding: "48px 40px", width: 380, boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }}>
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>🧾</div>
+          <div style={{ fontFamily: "'Shippori Mincho',serif", fontSize: 22, fontWeight: 600, color: C.navy }}>請求管理システム</div>
+          <div style={{ fontSize: 12, color: C.gray, marginTop: 4 }}>ログインしてください</div>
+        </div>
+        {error && <div style={{ background: "#f8d7da", color: C.red, padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 16 }}>{error}</div>}
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ fontSize: 12, fontWeight: 500, color: C.navy, display: "block", marginBottom: 6 }}>メールアドレス</label>
+          <input type="email" value={email} onChange={e => setEmail(e.target.value)} required style={{ ...s.input, width: "100%", padding: "10px 14px", fontSize: 14 }} placeholder="user@example.com" />
+        </div>
+        <div style={{ marginBottom: 24 }}>
+          <label style={{ fontSize: 12, fontWeight: 500, color: C.navy, display: "block", marginBottom: 6 }}>パスワード</label>
+          <input type="password" value={password} onChange={e => setPassword(e.target.value)} required style={{ ...s.input, width: "100%", padding: "10px 14px", fontSize: 14 }} placeholder="••••••••" />
+        </div>
+        <button type="submit" disabled={loading} style={{ ...s.btn("primary"), width: "100%", padding: "12px", fontSize: 15, fontWeight: 600 }}>
+          {loading ? "ログイン中..." : "ログイン"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 // ── App ───────────────────────────────────────────────────────────────────────
 export default function App() {
+  const [user, setUser] = useState(undefined); // undefined=checking, null=not logged in, object=logged in
   const [page, setPage] = useState("dashboard");
   const [clients, setClients] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
@@ -3423,6 +3468,12 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const unsubAuth = onAuthStateChanged(auth, (u) => setUser(u || null));
+    return () => unsubAuth();
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
     const unsubs = [];
     unsubs.push(onSnapshot(query(collection(db,"clients"),orderBy("createdAt","desc")),snap=>setClients(snap.docs.map(d=>({id:d.id,...d.data()})))));
     unsubs.push(onSnapshot(query(collection(db,"deliveries"),orderBy("createdAt","desc")),snap=>setDeliveries(snap.docs.map(d=>({id:d.id,...d.data()})))));
@@ -3442,7 +3493,11 @@ export default function App() {
       setLoading(false);
     }));
     return ()=>unsubs.forEach(u=>u());
-  }, []);
+  }, [user]);
+
+  // Auth loading / login screen
+  if (user === undefined) return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: C.navy }}><div style={{ color: "white", fontSize: 16 }}>読み込み中...</div></div>;
+  if (user === null) return <LoginPage />;
 
   const nav = [
     { id: "dashboard", label: "📊 ダッシュボード" },
@@ -3473,6 +3528,10 @@ export default function App() {
           <div style={{fontSize:11,color:"rgba(255,255,255,0.5)",marginTop:4}}>{company?.name||"自社名未設定"}</div>
         </div>
         {nav.map(n=><button key={n.id} style={s.navBtn(page===n.id)} onClick={()=>setPage(n.id)}>{n.label}</button>)}
+        <div style={{ marginTop: "auto", padding: "16px 20px", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user?.email}</div>
+          <button style={{ background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.7)", border: "none", borderRadius: 6, padding: "6px 12px", fontSize: 12, cursor: "pointer", width: "100%" }} onClick={() => signOut(auth)}>ログアウト</button>
+        </div>
       </div>
       <div style={s.main}>
         {page==="dashboard"&&<Dashboard clients={clients} deliveries={deliveries} invoices={invoices} balances={balances}/>}
