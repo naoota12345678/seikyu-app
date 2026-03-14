@@ -3318,10 +3318,13 @@ function SettingsPage({ company, setCompany, isAdmin, currentUser }) {
     setSyncing(false); setSyncMsg("");
   };
   const save = async () => {
+    // reRequestApprovalが未設定の場合は明示的にtrueを設定
+    const saveData = { ...form };
+    if (saveData.reRequestApproval === undefined) saveData.reRequestApproval = true;
     const existing = await getDocs(collection(db,"settings"));
-    if (existing.empty) await addDoc(collection(db,"settings"),{...form,updatedAt:serverTimestamp()});
-    else await updateDoc(doc(db,"settings",existing.docs[0].id),{...form,updatedAt:serverTimestamp()});
-    setCompany(form); alert("保存しました");
+    if (existing.empty) await addDoc(collection(db,"settings"),{...saveData,updatedAt:serverTimestamp()});
+    else await updateDoc(doc(db,"settings",existing.docs[0].id),{...saveData,updatedAt:serverTimestamp()});
+    setCompany(saveData); alert("保存しました");
   };
   return (
     <div>
