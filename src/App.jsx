@@ -2075,33 +2075,46 @@ function BalancePage({ clients, invoices, balances, company }) {
         const defaultMsg = `${cl.name} 御中\n\nいつもお世話になっております。\n下記の請求につきまして、お支払い期日を過ぎておりますのでご確認をお願いいたします。\n\n対象請求: ${docNos}\n未入金額: ¥${fmt(overdueTotal)}\n\nお忙しいところ恐れ入りますが、ご確認のほどよろしくお願いいたします。`;
         if (!reRequestMsg) setTimeout(() => setReRequestMsg(defaultMsg), 0);
         const msg = reRequestMsg || defaultMsg;
+        const needApproval = company?.reRequestApproval !== false;
         const sendEmailReRequest = async () => {
           if (!cl.email) return alert("取引先のメールアドレスが設定されていません");
-          if (!confirm(`${cl.name}（${cl.email}）にお支払いのお願いメールを送信します。`)) return;
           setEmailSending(true);
           try {
-            const htmlBody = msg.replace(/\n/g, "<br/>");
-            const res = await fetch("/api/send-invoice", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                to: cl.email,
-                subject: `【お支払いのお願い】${docNos}`,
-                html: htmlBody,
-              }),
-            });
-            const data = await res.json();
-            if (data.success) {
-              await addDoc(collection(db, "sendHistory"), {
-                docNo: docNos, invoiceId: clOverdue.map(i => i.id).join(","), clientId: cl.id,
-                clientName: cl.name, email: cl.email, method: "mail",
-                memo: `再請求メール ¥${fmt(overdueTotal)}`,
-                amount: overdueTotal, sentAt: serverTimestamp(), sentBy: "re-request",
+            if (needApproval) {
+              await addDoc(collection(db, "pendingBillings"), {
+                type: "re-request-email",
+                clientId: cl.id, clientName: cl.name, email: cl.email,
+                invoiceDocNo: docNos, invoiceIds: clOverdue.map(i => i.id),
+                total: overdueTotal, message: msg,
+                status: "pending", createdAt: serverTimestamp(),
               });
-              alert("再請求メールを送信しました");
+              alert("承認待ちに追加しました。承認待ちページで確認・送信してください。");
               { setReRequestTarget(null); setReRequestMsg(""); };
             } else {
-              alert("送信エラー: " + (data.error || "不明なエラー"));
+              if (!confirm(`${cl.name}（${cl.email}）にお支払いのお願いメールを送信します。`)) { setEmailSending(false); return; }
+              const htmlBody = msg.replace(/\n/g, "<br/>");
+              const res = await fetch("/api/send-invoice", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  to: cl.email,
+                  subject: `【お支払いのお願い】${docNos}`,
+                  html: htmlBody,
+                }),
+              });
+              const data = await res.json();
+              if (data.success) {
+                await addDoc(collection(db, "sendHistory"), {
+                  docNo: docNos, invoiceId: clOverdue.map(i => i.id).join(","), clientId: cl.id,
+                  clientName: cl.name, email: cl.email, method: "mail",
+                  memo: `再請求メール ¥${fmt(overdueTotal)}`,
+                  amount: overdueTotal, sentAt: serverTimestamp(), sentBy: "re-request",
+                });
+                alert("再請求メールを送信しました");
+                { setReRequestTarget(null); setReRequestMsg(""); };
+              } else {
+                alert("送信エラー: " + (data.error || "不明なエラー"));
+              }
             }
           } catch (e) { alert("エラー: " + e.message); }
           setEmailSending(false);
@@ -2134,7 +2147,7 @@ function BalancePage({ clients, invoices, balances, company }) {
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
                 <button style={s.btn("light")} onClick={() => { setReRequestTarget(null); setReRequestMsg(""); }} disabled={emailSending}>キャンセル</button>
                 <button style={s.btn("primary")} onClick={sendEmailReRequest} disabled={emailSending || !cl.email}>
-                  {emailSending ? "送信中..." : "再請求メールを送信"}
+                  {emailSending ? "処理中..." : needApproval ? "承認待ちに追加" : "再請求メールを送信"}
                 </button>
               </div>
             </div>
@@ -2146,42 +2159,49 @@ function BalancePage({ clients, invoices, balances, company }) {
         const clOverdue = invoices.filter(i => i.status === "unpaid" && i.clientId === cl.id);
         const overdueTotal = clOverdue.reduce((a, i) => a + (i.total || 0), 0);
         const docNos = clOverdue.map(i => i.docNo).join(", ");
+        const needApproval = company?.reRequestApproval !== false;
         const sendStripeInvoice = async () => {
           if (!cl.email) return alert("取引先のメールアドレスが設定されていません");
-          if (!confirm(`${cl.name} に ¥${fmt(overdueTotal)} のStripe請求書を送信します。\n\n対象: ${docNos}\n送信先: ${cl.email}\n\n※ Stripe手数料（3.6%）が発生します。`)) return;
           setStripeSending(true);
           try {
-            const items = clOverdue.map(inv => ({
-              name: `${inv.docNo} 未入金分`,
-              qty: 1,
-              unitAmount: inv.total || 0,
-            }));
-            const res = await fetch("/api/stripe-invoice", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                stripeSecretKey: company.stripeSecretKey,
-                clientName: cl.name,
-                email: cl.email,
-                amount: overdueTotal,
-                currency: "jpy",
-                description: `未入金再請求（${docNos}）`,
-                invoiceItems: items,
-                docNos,
-              }),
-            });
-            const data = await res.json();
-            if (data.success) {
-              await addDoc(collection(db, "sendHistory"), {
-                docNo: docNos, invoiceId: clOverdue.map(i => i.id).join(","), clientId: cl.id,
-                clientName: cl.name, email: cl.email, method: "stripe",
-                memo: `Stripe再請求 ¥${fmt(overdueTotal)} / ${data.invoiceUrl}`,
-                amount: overdueTotal, sentAt: serverTimestamp(), sentBy: "stripe",
+            if (needApproval) {
+              const items = clOverdue.map(inv => ({ name: `${inv.docNo} 未入金分`, qty: 1, unitAmount: inv.total || 0 }));
+              await addDoc(collection(db, "pendingBillings"), {
+                type: "re-request-stripe",
+                clientId: cl.id, clientName: cl.name, email: cl.email,
+                invoiceDocNo: docNos, invoiceIds: clOverdue.map(i => i.id),
+                total: overdueTotal, invoiceItems: items,
+                status: "pending", createdAt: serverTimestamp(),
               });
-              alert(`Stripe請求書を送信しました！\n\n決済URL: ${data.invoiceUrl}`);
+              alert("承認待ちに追加しました。承認待ちページで確認・送信してください。");
               setStripeTarget(null);
             } else {
-              alert("Stripe請求エラー: " + (data.error || "不明なエラー"));
+              if (!confirm(`${cl.name} に ¥${fmt(overdueTotal)} のStripe請求書を送信します。\n\n対象: ${docNos}\n送信先: ${cl.email}\n\n※ Stripe手数料（3.6%）が発生します。`)) { setStripeSending(false); return; }
+              const items = clOverdue.map(inv => ({ name: `${inv.docNo} 未入金分`, qty: 1, unitAmount: inv.total || 0 }));
+              const res = await fetch("/api/stripe-invoice", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  stripeSecretKey: company.stripeSecretKey,
+                  clientName: cl.name, email: cl.email,
+                  amount: overdueTotal, currency: "jpy",
+                  description: `未入金再請求（${docNos}）`,
+                  invoiceItems: items, docNos,
+                }),
+              });
+              const data = await res.json();
+              if (data.success) {
+                await addDoc(collection(db, "sendHistory"), {
+                  docNo: docNos, invoiceId: clOverdue.map(i => i.id).join(","), clientId: cl.id,
+                  clientName: cl.name, email: cl.email, method: "stripe",
+                  memo: `Stripe再請求 ¥${fmt(overdueTotal)} / ${data.invoiceUrl}`,
+                  amount: overdueTotal, sentAt: serverTimestamp(), sentBy: "stripe",
+                });
+                alert(`Stripe請求書を送信しました！\n\n決済URL: ${data.invoiceUrl}`);
+                setStripeTarget(null);
+              } else {
+                alert("Stripe請求エラー: " + (data.error || "不明なエラー"));
+              }
             }
           } catch (e) { alert("エラー: " + e.message); }
           setStripeSending(false);
@@ -2215,7 +2235,7 @@ function BalancePage({ clients, invoices, balances, company }) {
                 <div style={{ display: "flex", gap: 8 }}>
                   <button style={s.btn("light")} onClick={() => setStripeTarget(null)} disabled={stripeSending}>キャンセル</button>
                   <button style={{ ...s.btn("primary"), background: "#635BFF" }} onClick={sendStripeInvoice} disabled={stripeSending || !cl.email}>
-                    {stripeSending ? "送信中..." : "Stripe請求書を送信"}
+                    {stripeSending ? "処理中..." : needApproval ? "承認待ちに追加" : "Stripe請求書を送信"}
                   </button>
                 </div>
               </div>
@@ -3112,33 +3132,78 @@ function PendingPage({ clients, company, divisions, balances }) {
     setSending(p.id);
     try {
       const cl = clients.find(c => c.id === p.clientId) || {};
-      if (cl.email) {
-        const div = divisions?.find(d => d.id === p.divisionId);
-        const co = div ? { ...company, ...Object.fromEntries(Object.entries(div).filter(([,v]) => v)) } : company;
+      if (p.type === "re-request-email") {
+        // メール再請求の承認
+        const htmlBody = (p.message || "").replace(/\n/g, "<br/>");
         await fetch("/api/send-invoice", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            to: cl.email,
-            subject: `【請求書】${p.invoiceDocNo} ${co.name || ""}`,
-            html: `<div style="font-family:sans-serif;color:#333;">
-              <p>${cl.name} 御中</p>
-              <p>いつもお世話になっております。<br>${co.name || ""}です。</p>
-              <p>請求書（${p.invoiceDocNo}）をお送りいたします。</p>
-              <p>金額：¥${fmt(p.total)}</p>
-              <p>ご確認のほど、よろしくお願いいたします。</p>
-              <hr style="border:none;border-top:1px solid #ddd;margin:20px 0">
-              <p style="font-size:12px;color:#888">${co.name || ""}<br>${co.address || ""}<br>TEL ${co.tel || ""}</p>
-            </div>`,
+            to: p.email || cl.email,
+            subject: `【お支払いのお願い】${p.invoiceDocNo}`,
+            html: htmlBody,
           }),
         });
         await addDoc(collection(db, "sendHistory"), {
-          docNo: p.invoiceDocNo, invoiceId: p.invoiceId,
+          docNo: p.invoiceDocNo, invoiceId: (p.invoiceIds || []).join(","),
           clientId: p.clientId, clientName: cl.name || "",
-          email: cl.email, method: "auto", memo: "承認後自動送信",
-          amount: p.total || 0, sentAt: serverTimestamp(), sentBy: "auto",
+          email: p.email || cl.email, method: "mail",
+          memo: `再請求メール（承認後送信） ¥${fmt(p.total)}`,
+          amount: p.total || 0, sentAt: serverTimestamp(), sentBy: "re-request",
         });
-        if (p.invoiceId) await updateDoc(doc(db, "invoices", p.invoiceId), { sentStatus: "sent", lastSentAt: serverTimestamp() });
+      } else if (p.type === "re-request-stripe") {
+        // Stripe再請求の承認
+        const res = await fetch("/api/stripe-invoice", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            stripeSecretKey: company.stripeSecretKey,
+            clientName: cl.name, email: p.email || cl.email,
+            amount: p.total, currency: "jpy",
+            description: `未入金再請求（${p.invoiceDocNo}）`,
+            invoiceItems: p.invoiceItems || [],
+            docNos: p.invoiceDocNo,
+          }),
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || "Stripe送信エラー");
+        await addDoc(collection(db, "sendHistory"), {
+          docNo: p.invoiceDocNo, invoiceId: (p.invoiceIds || []).join(","),
+          clientId: p.clientId, clientName: cl.name || "",
+          email: p.email || cl.email, method: "stripe",
+          memo: `Stripe再請求（承認後送信） ¥${fmt(p.total)} / ${data.invoiceUrl}`,
+          amount: p.total || 0, sentAt: serverTimestamp(), sentBy: "stripe",
+        });
+      } else {
+        // 既存の定期請求/締日請求の承認
+        if (cl.email) {
+          const div = divisions?.find(d => d.id === p.divisionId);
+          const co = div ? { ...company, ...Object.fromEntries(Object.entries(div).filter(([,v]) => v)) } : company;
+          await fetch("/api/send-invoice", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              to: cl.email,
+              subject: `【請求書】${p.invoiceDocNo} ${co.name || ""}`,
+              html: `<div style="font-family:sans-serif;color:#333;">
+                <p>${cl.name} 御中</p>
+                <p>いつもお世話になっております。<br>${co.name || ""}です。</p>
+                <p>請求書（${p.invoiceDocNo}）をお送りいたします。</p>
+                <p>金額：¥${fmt(p.total)}</p>
+                <p>ご確認のほど、よろしくお願いいたします。</p>
+                <hr style="border:none;border-top:1px solid #ddd;margin:20px 0">
+                <p style="font-size:12px;color:#888">${co.name || ""}<br>${co.address || ""}<br>TEL ${co.tel || ""}</p>
+              </div>`,
+            }),
+          });
+          await addDoc(collection(db, "sendHistory"), {
+            docNo: p.invoiceDocNo, invoiceId: p.invoiceId,
+            clientId: p.clientId, clientName: cl.name || "",
+            email: cl.email, method: "auto", memo: "承認後自動送信",
+            amount: p.total || 0, sentAt: serverTimestamp(), sentBy: "auto",
+          });
+          if (p.invoiceId) await updateDoc(doc(db, "invoices", p.invoiceId), { sentStatus: "sent", lastSentAt: serverTimestamp() });
+        }
       }
       await updateDoc(doc(db, "pendingBillings", p.id), { status: "approved", approvedAt: serverTimestamp() });
     } catch (e) { alert("送信エラー: " + e.message); }
@@ -3168,7 +3233,7 @@ function PendingPage({ clients, company, divisions, balances }) {
                     <td style={s.td}>{p.invoiceDocNo}</td>
                     <td style={s.td}>{cl?.name || "—"}{cl?.email ? "" : <span style={{ fontSize: 11, color: C.red, marginLeft: 6 }}>※メール未設定</span>}</td>
                     <td style={s.td}>¥{fmt(p.total)}</td>
-                    <td style={s.td}><span style={s.badge(p.type==="recurring"?"blue":"gold")}>{p.type==="recurring"?"定期":"締日"}</span></td>
+                    <td style={s.td}><span style={s.badge(p.type==="recurring"?"blue":p.type==="re-request-email"?"red":p.type==="re-request-stripe"?"red":"gold")}>{p.type==="recurring"?"定期":p.type==="re-request-email"?"✉再請求":p.type==="re-request-stripe"?"💳Stripe":"締日"}</span></td>
                     <td style={s.td}>{p.createdAt?.toDate?.()?.toLocaleDateString?.() || "—"}</td>
                     <td style={s.td}>
                       <div style={{ display: "flex", gap: 5 }}>
@@ -3198,7 +3263,7 @@ function PendingPage({ clients, company, divisions, balances }) {
                     <td style={s.td}>{p.invoiceDocNo}</td>
                     <td style={s.td}>{cl?.name || "—"}</td>
                     <td style={s.td}>¥{fmt(p.total)}</td>
-                    <td style={s.td}><span style={s.badge(p.type==="recurring"?"blue":"gold")}>{p.type==="recurring"?"定期":"締日"}</span></td>
+                    <td style={s.td}><span style={s.badge(p.type==="recurring"?"blue":p.type==="re-request-email"?"red":p.type==="re-request-stripe"?"red":"gold")}>{p.type==="recurring"?"定期":p.type==="re-request-email"?"✉再請求":p.type==="re-request-stripe"?"💳Stripe":"締日"}</span></td>
                     <td style={s.td}><span style={s.badge(p.status==="approved"?"green":"red")}>{p.status==="approved"?"承認済":"却下"}</span></td>
                   </tr>
                 );
@@ -3307,6 +3372,18 @@ function SettingsPage({ company, setCompany }) {
               <div style={s.col}><span style={s.label}>Refresh Token</span><input style={{...s.input,minWidth:220}} type="password" value={form.amazonRefreshToken||""} onChange={e=>setF("amazonRefreshToken",e.target.value)} placeholder="未設定" /></div>
             </div>
             <button style={{...s.btn("light"),marginTop:8,fontSize:12}} onClick={() => { if(confirm("Amazonの過去1年分を取得します。"))runInitialSync("amazon"); }} disabled={syncing}>{syncMsg && syncMsg.includes("Amazon") ? syncMsg : "Amazon 初期同期（過去1年）"}</button>
+          </div>
+        </div>
+      </div>
+      <div style={s.card}>
+        <h3 style={{margin:"0 0 16px",color:C.navy}}>再請求設定</h3>
+        <div style={s.row}>
+          <div style={s.col}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+              <input type="checkbox" checked={form.reRequestApproval !== false} onChange={e => setF("reRequestApproval", e.target.checked)} />
+              <span style={{ fontSize: 13 }}>再請求時に承認を必要とする</span>
+            </label>
+            <div style={{ fontSize: 11, color: C.gray, marginTop: 4 }}>OFFにすると、残高管理から直接メール/Stripe請求を送信します</div>
           </div>
         </div>
       </div>
