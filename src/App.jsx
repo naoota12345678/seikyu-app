@@ -771,7 +771,7 @@ function QuotationForm({ clients, products, quotations, clientPrices, divisions,
 }
 
 // ── Quotations List ──────────────────────────────────────────────────────────
-function QuotationsList({ clients, quotations, products, deliveries, company, clientPrices, divisions }) {
+function QuotationsList({ clients, quotations, products, deliveries, company, clientPrices, divisions, isAdmin }) {
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -846,7 +846,7 @@ function QuotationsList({ clients, quotations, products, deliveries, company, cl
                       {q.status !== "ordered" && (
                         <button style={{ ...s.btn("gold"), padding: "4px 8px", fontSize: 12 }} onClick={() => toDelivery(q)}>納品書作成</button>
                       )}
-                      <button style={{ ...s.btn("red"), padding: "4px 8px", fontSize: 12 }} onClick={() => deleteQ(q.id)}>削除</button>
+                      {isAdmin && <button style={{ ...s.btn("red"), padding: "4px 8px", fontSize: 12 }} onClick={() => deleteQ(q.id)}>削除</button>}
                     </div>
                   </td>
                 </tr>
@@ -915,7 +915,7 @@ function Dashboard({ clients, deliveries, invoices, balances }) {
 }
 
 // ── Deliveries ────────────────────────────────────────────────────────────────
-function DeliveriesList({ clients, deliveries, products, invoices, company, balances, clientPrices, divisions }) {
+function DeliveriesList({ clients, deliveries, products, invoices, company, balances, clientPrices, divisions, isAdmin }) {
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -970,7 +970,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
                       {d.status !== "invoiced" && client?.billingType !== "closing" && client?.billingType !== "monthly" && (
                         <button style={{ ...s.btn("gold"), padding: "4px 8px", fontSize: 12 }} onClick={() => issueInvoice(d)}>請求書発行</button>
                       )}
-                      <button style={{ ...s.btn("red"), padding: "4px 8px", fontSize: 12 }} onClick={() => deleteD(d.id)}>削除</button>
+                      {isAdmin && <button style={{ ...s.btn("red"), padding: "4px 8px", fontSize: 12 }} onClick={() => deleteD(d.id)}>削除</button>}
                     </div>
                   </td>
                 </tr>
@@ -1244,7 +1244,7 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
 }
 
 // ── Invoices ──────────────────────────────────────────────────────────────────
-function InvoicesList({ clients, invoices, deliveries, company, balances, divisions }) {
+function InvoicesList({ clients, invoices, deliveries, company, balances, divisions, isAdmin }) {
   const [search, setSearch] = useState("");
   const [printTarget, setPrintTarget] = useState(null);
   const [balTarget, setBalTarget] = useState(null);
@@ -1306,7 +1306,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
                         <button style={{ ...s.btn("green"), padding: "4px 8px", fontSize: 12 }} onClick={() => markPaid(inv)}>入金済</button>
                         <button style={{ ...s.btn("gold"), padding: "4px 8px", fontSize: 12 }} onClick={() => setBalTarget({ client, balance: bal })}>入金記録</button>
                       </>}
-                      <button style={{ ...s.btn("red"), padding: "4px 8px", fontSize: 12 }} onClick={() => del(inv.id)}>削除</button>
+                      {isAdmin && <button style={{ ...s.btn("red"), padding: "4px 8px", fontSize: 12 }} onClick={() => del(inv.id)}>削除</button>}
                     </div>
                   </td>
                 </tr>
@@ -2249,7 +2249,7 @@ function BalancePage({ clients, invoices, balances, company }) {
 }
 
 // ── Clients ───────────────────────────────────────────────────────────────────
-function ClientsPage({ clients, divisions }) {
+function ClientsPage({ clients, divisions, isAdmin }) {
   const [form, setForm] = useState({ name: "", kana: "", address: "", tel: "", email: "", billingType: "immediate", closingDays: [], sendMode: "manual", isOneTime: false, divisionId: "" });
   const [editing, setEditing] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -2443,7 +2443,7 @@ function ClientsPage({ clients, divisions }) {
                 <td style={s.td}>
                   <div style={{display:"flex",gap:6}}>
                     <button style={{...s.btn("light"),padding:"4px 10px",fontSize:12}} onClick={()=>edit(c)}>編集</button>
-                    <button style={{...s.btn("red"),padding:"4px 10px",fontSize:12}} onClick={()=>del(c.id)}>削除</button>
+                    {isAdmin && <button style={{...s.btn("red"),padding:"4px 10px",fontSize:12}} onClick={()=>del(c.id)}>削除</button>}
                   </div>
                 </td>
               </tr>
@@ -2456,7 +2456,7 @@ function ClientsPage({ clients, divisions }) {
 }
 
 // ── Products ──────────────────────────────────────────────────────────────────
-function ProductsPage({ products, company }) {
+function ProductsPage({ products, company, isAdmin }) {
   const defRate = company?.defaultTaxRate !== undefined ? company.defaultTaxRate : 10;
   const [form, setForm] = useState({ name:"",code:"",jan:"",unit:"",price:"",taxRate:defRate,notes:"" });
   const [editing, setEditing] = useState(null);
@@ -2575,7 +2575,7 @@ function ProductsPage({ products, company }) {
                 <td style={s.td}>
                   <div style={{display:"flex",gap:6}}>
                     <button style={{...s.btn("light"),padding:"4px 10px",fontSize:12}} onClick={()=>edit(p)}>編集</button>
-                    <button style={{...s.btn("red"),padding:"4px 10px",fontSize:12}} onClick={()=>del(p.id)}>削除</button>
+                    {isAdmin && <button style={{...s.btn("red"),padding:"4px 10px",fontSize:12}} onClick={()=>del(p.id)}>削除</button>}
                   </div>
                 </td>
               </tr>
@@ -2588,7 +2588,7 @@ function ProductsPage({ products, company }) {
 }
 
 // ── ClientPrices ──────────────────────────────────────────────────────────────
-function ClientPricesPage({ clients, products, clientPrices }) {
+function ClientPricesPage({ clients, products, clientPrices, isAdmin }) {
   const [selClient, setSelClient] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [formProduct, setFormProduct] = useState("");
@@ -2767,7 +2767,7 @@ function ClientPricesPage({ clients, products, clientPrices }) {
                   <td style={s.td}>
                     <div style={{ display: "flex", gap: 6 }}>
                       <button style={{ ...s.btn("light"), padding: "4px 10px", fontSize: 12 }} onClick={() => edit(cp)}>編集</button>
-                      <button style={{ ...s.btn("red"), padding: "4px 10px", fontSize: 12 }} onClick={() => del(cp.id)}>削除</button>
+                      {isAdmin && <button style={{ ...s.btn("red"), padding: "4px 10px", fontSize: 12 }} onClick={() => del(cp.id)}>削除</button>}
                     </div>
                   </td>
                 </tr>
@@ -2782,7 +2782,7 @@ function ClientPricesPage({ clients, products, clientPrices }) {
 }
 
 // ── Send History ──────────────────────────────────────────────────────────────
-function SendHistoryPage() {
+function SendHistoryPage({ isAdmin }) {
   const [history, setHistory] = useState([]);
   const [search, setSearch] = useState("");
   useEffect(() => {
@@ -2825,9 +2825,9 @@ function SendHistoryPage() {
                   <td style={s.td}>¥{fmt(h.amount)}</td>
                   <td style={s.td}><span style={s.badge(h.method === "mail" || h.method === "auto" ? "blue" : "gray")}>{methodLabel[h.method] || h.method}</span></td>
                   <td style={s.td}>{h.memo || ""}</td>
-                  <td style={s.td}>
+                  {isAdmin && <td style={s.td}>
                     <button style={{ ...s.btn("red"), padding: "4px 12px", fontSize: 12 }} onClick={() => deleteH(h)}>削除</button>
-                  </td>
+                  </td>}
                 </tr>
               ))}
             </tbody>
@@ -2839,7 +2839,7 @@ function SendHistoryPage() {
 }
 
 // ── PDF History ───────────────────────────────────────────────────────────────
-function PDFHistoryPage() {
+function PDFHistoryPage({ isAdmin }) {
   const [history, setHistory] = useState([]);
   const [search, setSearch] = useState("");
   useEffect(() => {
@@ -2884,7 +2884,7 @@ function PDFHistoryPage() {
                     <div style={{ display: "flex", gap: 6 }}>
                       <a href={h.storageUrl} target="_blank" rel="noopener noreferrer" style={{ ...s.btn("primary"), textDecoration: "none", padding: "4px 12px", fontSize: 12 }}>表示</a>
                       <button style={{ ...s.btn("gold"), padding: "4px 12px", fontSize: 12 }} onClick={() => { const a = document.createElement("a"); a.href = h.storageUrl; a.download = h.filename; a.click(); }}>DL</button>
-                      <button style={{ ...s.btn("red"), padding: "4px 12px", fontSize: 12 }} onClick={() => deleteH(h)}>削除</button>
+                      {isAdmin && <button style={{ ...s.btn("red"), padding: "4px 12px", fontSize: 12 }} onClick={() => deleteH(h)}>削除</button>}
                     </div>
                   </td>
                 </tr>
@@ -2898,7 +2898,7 @@ function PDFHistoryPage() {
 }
 
 // ── Divisions ─────────────────────────────────────────────────────────────────
-function DivisionsPage({ divisions }) {
+function DivisionsPage({ divisions, isAdmin }) {
   const empty = { name:"",prefix:"",address:"",tel:"",fax:"",registrationNo:"",bankName:"",bankBranch:"",bankType:"普通",bankNo:"",bankHolder:"" };
   const [form, setForm] = useState(empty);
   const [editing, setEditing] = useState(null);
@@ -2967,7 +2967,7 @@ function DivisionsPage({ divisions }) {
                 <td style={s.td}>
                   <div style={{display:"flex",gap:6}}>
                     <button style={{...s.btn("light"),padding:"4px 10px",fontSize:12}} onClick={()=>edit(d)}>編集</button>
-                    <button style={{...s.btn("red"),padding:"4px 10px",fontSize:12}} onClick={()=>del(d.id)}>削除</button>
+                    {isAdmin && <button style={{...s.btn("red"),padding:"4px 10px",fontSize:12}} onClick={()=>del(d.id)}>削除</button>}
                   </div>
                 </td>
               </tr>
@@ -2981,7 +2981,7 @@ function DivisionsPage({ divisions }) {
 }
 
 // ── Recurring Billings ────────────────────────────────────────────────────────
-function RecurringPage({ clients, divisions, invoices, company, balances }) {
+function RecurringPage({ clients, divisions, invoices, company, balances, isAdmin }) {
   const [items, setItems] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -3101,7 +3101,7 @@ function RecurringPage({ clients, divisions, invoices, company, balances }) {
                       }}>👁 プレビュー</button>
                       <button style={{ ...s.btn("light"), padding: "4px 8px", fontSize: 12 }} onClick={() => edit(r)}>編集</button>
                       <button style={{ ...s.btn(r.enabled?"gold":"green"), padding: "4px 8px", fontSize: 12 }} onClick={() => toggle(r)}>{r.enabled?"停止":"有効化"}</button>
-                      <button style={{ ...s.btn("red"), padding: "4px 8px", fontSize: 12 }} onClick={() => del(r.id)}>削除</button>
+                      {isAdmin && <button style={{ ...s.btn("red"), padding: "4px 8px", fontSize: 12 }} onClick={() => del(r.id)}>削除</button>}
                     </div>
                   </td>
                 </tr>
@@ -3118,7 +3118,7 @@ function RecurringPage({ clients, divisions, invoices, company, balances }) {
 }
 
 // ── Pending Approvals ─────────────────────────────────────────────────────────
-function PendingPage({ clients, company, divisions, balances }) {
+function PendingPage({ clients, company, divisions, balances, isAdmin }) {
   const [pendings, setPendings] = useState([]);
   const [sending, setSending] = useState(null);
 
@@ -3237,10 +3237,14 @@ function PendingPage({ clients, company, divisions, balances }) {
                     <td style={s.td}><span style={s.badge(p.type==="recurring"?"blue":p.type==="re-request-email"?"red":p.type==="re-request-stripe"?"red":"gold")}>{p.type==="recurring"?"定期":p.type==="re-request-email"?"✉再請求":p.type==="re-request-stripe"?"💳Stripe":"締日"}</span></td>
                     <td style={s.td}>{p.createdAt?.toDate?.()?.toLocaleDateString?.() || "—"}</td>
                     <td style={s.td}>
-                      <div style={{ display: "flex", gap: 5 }}>
-                        <button style={{ ...s.btn("green"), padding: "4px 10px", fontSize: 12 }} onClick={() => approve(p)} disabled={sending===p.id}>{sending===p.id ? "送信中..." : "承認・送信"}</button>
-                        <button style={{ ...s.btn("red"), padding: "4px 10px", fontSize: 12 }} onClick={() => reject(p)}>却下</button>
-                      </div>
+                      {isAdmin ? (
+                        <div style={{ display: "flex", gap: 5 }}>
+                          <button style={{ ...s.btn("green"), padding: "4px 10px", fontSize: 12 }} onClick={() => approve(p)} disabled={sending===p.id}>{sending===p.id ? "送信中..." : "承認・送信"}</button>
+                          <button style={{ ...s.btn("red"), padding: "4px 10px", fontSize: 12 }} onClick={() => reject(p)}>却下</button>
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: 12, color: C.gray }}>管理者のみ</span>
+                      )}
                     </td>
                   </tr>
                 );
@@ -3278,7 +3282,7 @@ function PendingPage({ clients, company, divisions, balances }) {
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────
-function SettingsPage({ company, setCompany }) {
+function SettingsPage({ company, setCompany, isAdmin, currentUser }) {
   const [form, setForm] = useState(company || {});
   const setF = (k,v) => setForm(f => ({...f,[k]:v}));
   const [syncing, setSyncing] = useState(false);
@@ -3404,6 +3408,105 @@ function SettingsPage({ company, setCompany }) {
         </div>
       </div>
       <button style={s.btn("primary")} onClick={save}>保存</button>
+      {isAdmin && <UserManagement currentUser={currentUser} />}
+    </div>
+  );
+}
+
+// ── ユーザー管理 ──────────────────────────────────────────────────────────────
+function UserManagement({ currentUser }) {
+  const [users, setUsers] = useState([]);
+  const [newEmail, setNewEmail] = useState("");
+  const [newPass, setNewPass] = useState("");
+  const [newName, setNewName] = useState("");
+  const [newRole, setNewRole] = useState("staff");
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  const load = async () => {
+    try {
+      const res = await fetch("/api/manage-user", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "list", callerUid: currentUser.uid }) });
+      const data = await res.json();
+      if (data.success) setUsers(data.users);
+    } catch (e) { console.error(e); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const addUser = async () => {
+    if (!newEmail || !newPass) { alert("メールアドレスとパスワードは必須です"); return; }
+    if (newPass.length < 6) { alert("パスワードは6文字以上にしてください"); return; }
+    setLoading(true); setMsg("");
+    try {
+      const res = await fetch("/api/manage-user", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "create", email: newEmail, password: newPass, displayName: newName, role: newRole, callerUid: currentUser.uid }) });
+      const data = await res.json();
+      if (data.success) { setMsg("ユーザーを追加しました"); setNewEmail(""); setNewPass(""); setNewName(""); setNewRole("staff"); load(); }
+      else setMsg("エラー: " + (data.error || "不明"));
+    } catch (e) { setMsg("エラー: " + e.message); }
+    setLoading(false);
+  };
+
+  const delUser = async (uid) => {
+    if (!confirm("このユーザーを削除しますか？")) return;
+    try {
+      const res = await fetch("/api/manage-user", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "delete", uid, callerUid: currentUser.uid }) });
+      const data = await res.json();
+      if (data.success) load();
+      else alert("エラー: " + (data.error || "不明"));
+    } catch (e) { alert("エラー: " + e.message); }
+  };
+
+  const changeRole = async (uid, role) => {
+    try {
+      const res = await fetch("/api/manage-user", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "updateRole", uid, role, callerUid: currentUser.uid }) });
+      const data = await res.json();
+      if (data.success) load();
+      else alert("エラー: " + (data.error || "不明"));
+    } catch (e) { alert("エラー: " + e.message); }
+  };
+
+  return (
+    <div style={{ ...({background:"white",borderRadius:12,padding:"24px 28px",marginBottom:20,border:`1px solid #e8e2da`}), marginTop: 20 }}>
+      <h3 style={{ margin: "0 0 16px", color: C.navy }}>ユーザー管理</h3>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, marginBottom: 16 }}>
+        <thead><tr>
+          <th style={s.th}>メール</th><th style={s.th}>名前</th><th style={s.th}>権限</th><th style={s.th}>操作</th>
+        </tr></thead>
+        <tbody>
+          {users.map(u => (
+            <tr key={u.uid}>
+              <td style={s.td}>{u.email}{u.uid === currentUser.uid ? " (自分)" : ""}</td>
+              <td style={s.td}>{u.displayName || "—"}</td>
+              <td style={s.td}>
+                <select style={{ ...({border:"1px solid #ccc",borderRadius:6,padding:"4px 8px",fontSize:13}), width: 100 }} value={u.role || "staff"} onChange={e => changeRole(u.uid, e.target.value)} disabled={u.uid === currentUser.uid}>
+                  <option value="admin">管理者</option>
+                  <option value="staff">スタッフ</option>
+                </select>
+              </td>
+              <td style={s.td}>
+                {u.uid !== currentUser.uid && (
+                  <button style={{ ...({background:C.red,color:"white",border:"none",borderRadius:6,padding:"4px 10px",fontSize:12,cursor:"pointer"}) }} onClick={() => delUser(u.uid)}>削除</button>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ borderTop: `1px solid ${C.light}`, paddingTop: 16 }}>
+        <div style={{ fontWeight: 600, fontSize: 13, color: C.navy, marginBottom: 10 }}>ユーザー追加</div>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div><span style={{ fontSize: 11, color: C.gray, display: "block", marginBottom: 4 }}>メール *</span><input style={{ ...({border:"1px solid #ccc",borderRadius:6,padding:"6px 10px",fontSize:13}), width: 200 }} type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="user@example.com" /></div>
+          <div><span style={{ fontSize: 11, color: C.gray, display: "block", marginBottom: 4 }}>パスワード *</span><input style={{ ...({border:"1px solid #ccc",borderRadius:6,padding:"6px 10px",fontSize:13}), width: 140 }} type="password" value={newPass} onChange={e => setNewPass(e.target.value)} placeholder="6文字以上" /></div>
+          <div><span style={{ fontSize: 11, color: C.gray, display: "block", marginBottom: 4 }}>名前</span><input style={{ ...({border:"1px solid #ccc",borderRadius:6,padding:"6px 10px",fontSize:13}), width: 120 }} value={newName} onChange={e => setNewName(e.target.value)} placeholder="任意" /></div>
+          <div><span style={{ fontSize: 11, color: C.gray, display: "block", marginBottom: 4 }}>権限</span>
+            <select style={{ ...({border:"1px solid #ccc",borderRadius:6,padding:"6px 10px",fontSize:13}), width: 100 }} value={newRole} onChange={e => setNewRole(e.target.value)}>
+              <option value="staff">スタッフ</option>
+              <option value="admin">管理者</option>
+            </select>
+          </div>
+          <button style={{ background: C.navy, color: "white", border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 13, cursor: "pointer" }} onClick={addUser} disabled={loading}>{loading ? "追加中..." : "追加"}</button>
+        </div>
+        {msg && <div style={{ marginTop: 8, fontSize: 12, color: msg.includes("エラー") ? C.red : C.green }}>{msg}</div>}
+      </div>
     </div>
   );
 }
@@ -3454,6 +3557,7 @@ function LoginPage({ onLogin }) {
 // ── App ───────────────────────────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(undefined); // undefined=checking, null=not logged in, object=logged in
+  const [userRole, setUserRole] = useState(null); // "admin" | "staff"
   const [page, setPage] = useState("dashboard");
   const [clients, setClients] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
@@ -3471,6 +3575,25 @@ export default function App() {
     const unsubAuth = onAuthStateChanged(auth, (u) => setUser(u || null));
     return () => unsubAuth();
   }, []);
+
+  // ユーザー権限取得
+  useEffect(() => {
+    if (!user) { setUserRole(null); return; }
+    const unsub = onSnapshot(doc(db, "users", user.uid), async (snap) => {
+      if (snap.exists()) {
+        setUserRole(snap.data().role || "staff");
+      } else {
+        // usersコレクションにまだ登録されていない → 初回セットアップ
+        try {
+          const res = await fetch("/api/manage-user", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "init", callerUid: user.uid, email: user.email }) });
+          const data = await res.json();
+          if (data.success && data.initialized) setUserRole("admin");
+          else setUserRole("staff");
+        } catch { setUserRole("staff"); }
+      }
+    });
+    return () => unsub();
+  }, [user]);
 
   useEffect(() => {
     if (!user) return;
@@ -3498,6 +3621,8 @@ export default function App() {
   // Auth loading / login screen
   if (user === undefined) return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: C.navy }}><div style={{ color: "white", fontSize: 16 }}>読み込み中...</div></div>;
   if (user === null) return <LoginPage />;
+
+  const isAdmin = userRole === "admin";
 
   const nav = [
     { id: "dashboard", label: "📊 ダッシュボード" },
@@ -3529,27 +3654,28 @@ export default function App() {
         </div>
         {nav.map(n=><button key={n.id} style={s.navBtn(page===n.id)} onClick={()=>setPage(n.id)}>{n.label}</button>)}
         <div style={{ marginTop: "auto", padding: "16px 20px", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user?.email}</div>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user?.email}</div>
+          <div style={{ fontSize: 10, color: isAdmin ? C.gold : "rgba(255,255,255,0.4)", marginBottom: 8 }}>{isAdmin ? "管理者" : "スタッフ"}</div>
           <button style={{ background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.7)", border: "none", borderRadius: 6, padding: "6px 12px", fontSize: 12, cursor: "pointer", width: "100%" }} onClick={() => signOut(auth)}>ログアウト</button>
         </div>
       </div>
       <div style={s.main}>
         {page==="dashboard"&&<Dashboard clients={clients} deliveries={deliveries} invoices={invoices} balances={balances}/>}
-        {page==="quotations"&&<QuotationsList clients={clients} quotations={quotations} products={products} deliveries={deliveries} company={company} clientPrices={clientPrices} divisions={divisions}/>}
-        {page==="deliveries"&&<DeliveriesList clients={clients} deliveries={deliveries} products={products} invoices={invoices} company={company} balances={balances} clientPrices={clientPrices} divisions={divisions}/>}
-        {page==="invoices"&&<InvoicesList clients={clients} invoices={invoices} deliveries={deliveries} company={company} balances={balances} divisions={divisions}/>}
+        {page==="quotations"&&<QuotationsList clients={clients} quotations={quotations} products={products} deliveries={deliveries} company={company} clientPrices={clientPrices} divisions={divisions} isAdmin={isAdmin}/>}
+        {page==="deliveries"&&<DeliveriesList clients={clients} deliveries={deliveries} products={products} invoices={invoices} company={company} balances={balances} clientPrices={clientPrices} divisions={divisions} isAdmin={isAdmin}/>}
+        {page==="invoices"&&<InvoicesList clients={clients} invoices={invoices} deliveries={deliveries} company={company} balances={balances} divisions={divisions} isAdmin={isAdmin}/>}
         {page==="monthly"&&<MonthlyBilling clients={clients} deliveries={deliveries} invoices={invoices} company={company} balances={balances} divisions={divisions}/>}
         {page==="sales"&&<SalesPage clients={clients} invoices={invoices} divisions={divisions} externalSales={externalSales}/>}
         {page==="balance"&&<BalancePage clients={clients} invoices={invoices} balances={balances} company={company}/>}
-        {page==="clients"&&<ClientsPage clients={clients} divisions={divisions}/>}
-        {page==="products"&&<ProductsPage products={products} company={company}/>}
-        {page==="clientPrices"&&<ClientPricesPage clients={clients} products={products} clientPrices={clientPrices}/>}
-        {page==="recurring"&&<RecurringPage clients={clients} divisions={divisions} invoices={invoices} company={company} balances={balances}/>}
-        {page==="pending"&&<PendingPage clients={clients} company={company} divisions={divisions} balances={balances}/>}
-        {page==="divisions"&&<DivisionsPage divisions={divisions}/>}
-        {page==="sendHistory"&&<SendHistoryPage/>}
-        {page==="pdfHistory"&&<PDFHistoryPage/>}
-        {page==="settings"&&<SettingsPage company={company} setCompany={setCompany}/>}
+        {page==="clients"&&<ClientsPage clients={clients} divisions={divisions} isAdmin={isAdmin}/>}
+        {page==="products"&&<ProductsPage products={products} company={company} isAdmin={isAdmin}/>}
+        {page==="clientPrices"&&<ClientPricesPage clients={clients} products={products} clientPrices={clientPrices} isAdmin={isAdmin}/>}
+        {page==="recurring"&&<RecurringPage clients={clients} divisions={divisions} invoices={invoices} company={company} balances={balances} isAdmin={isAdmin}/>}
+        {page==="pending"&&<PendingPage clients={clients} company={company} divisions={divisions} balances={balances} isAdmin={isAdmin}/>}
+        {page==="divisions"&&<DivisionsPage divisions={divisions} isAdmin={isAdmin}/>}
+        {page==="sendHistory"&&<SendHistoryPage isAdmin={isAdmin}/>}
+        {page==="pdfHistory"&&<PDFHistoryPage isAdmin={isAdmin}/>}
+        {page==="settings"&&<SettingsPage company={company} setCompany={setCompany} isAdmin={isAdmin} currentUser={user}/>}
       </div>
     </div>
   );
