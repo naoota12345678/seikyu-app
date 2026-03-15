@@ -7,15 +7,7 @@
   "crons": [
     {
       "path": "/api/cron-billing",
-      "schedule": "0 0 * * *"
-    },
-    {
-      "path": "/api/rakuten-sync",
-      "schedule": "0 1 * * *"
-    },
-    {
-      "path": "/api/amazon-sync",
-      "schedule": "0 2 * * *"
+      "schedule": "0 18 * * *"
     }
   ]
 }

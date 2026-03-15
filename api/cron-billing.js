@@ -8,8 +8,20 @@ if (!getApps().length) {
 }
 const db = getFirestore();
 
-const todayStr = () => new Date().toISOString().split("T")[0];
+// JST基準の日付（UTC+9）
+function jstNow() {
+  const d = new Date();
+  d.setHours(d.getHours() + 9);
+  return d;
+}
+const todayStr = () => jstNow().toISOString().split("T")[0];
 const currentMonth = () => todayStr().slice(0, 7);
+// 前日のJST日付（締日判定用：JST 3:00実行時は前日が締日当日）
+function yesterdayJST() {
+  const d = jstNow();
+  d.setDate(d.getDate() - 1);
+  return d;
+}
 function calcTaxByRate(items) {
   const groups = {};
   (items || []).forEach(i => {
@@ -41,20 +53,20 @@ async function genDocNo(prefix) {
   return `${prefix}-${ym}-${String(same.length + 1).padStart(3, "0")}`;
 }
 
-function isTodayClosingDay(closingDay) {
-  const d = new Date();
-  const todayDay = d.getDate();
+// 前日（JST）が締日かどうか判定（JST 3:00実行なので前日=締日当日）
+function isYesterdayClosingDay(closingDay) {
+  const d = yesterdayJST();
+  const yDay = d.getDate();
   const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-  if (closingDay === 0) return todayDay === lastDay;
-  return todayDay === closingDay;
+  if (closingDay === 0) return yDay === lastDay;
+  return yDay === closingDay;
 }
 
 function isTodayNDaysBefore(closingDay, n) {
-  const d = new Date();
+  const d = jstNow();
   const y = d.getFullYear(), m = d.getMonth();
   const lastDay = new Date(y, m + 1, 0).getDate();
   const targetDay = closingDay === 0 ? lastDay : Math.min(closingDay, lastDay);
-  // 当月の発行日からn日前
   const targetDate = new Date(y, m, targetDay);
   const checkDate = new Date(targetDate);
   checkDate.setDate(checkDate.getDate() - n);
@@ -62,7 +74,7 @@ function isTodayNDaysBefore(closingDay, n) {
 }
 
 function getClosingPeriod(closingDay) {
-  const now = new Date();
+  const now = yesterdayJST();
   const y = now.getFullYear(), m = now.getMonth() + 1;
   const pad = (n) => String(n).padStart(2, "0");
   const lastDay = new Date(y, m, 0).getDate();
@@ -189,7 +201,7 @@ export default async function handler(req, res) {
       const cDays = client.closingDays && client.closingDays.length ? client.closingDays : [0];
 
       for (const cd of cDays) {
-        if (!isTodayClosingDay(cd)) continue;
+        if (!isYesterdayClosingDay(cd)) continue;
 
         const period = getClosingPeriod(cd);
         const delsSnap = await db.collection("deliveries")
@@ -287,7 +299,7 @@ export default async function handler(req, res) {
           results.recurring.push({ client: r.clientId, item: r.itemName, pending: true, billingDate });
         } else {
           // 通常モード: 発行日当日に即発行
-          if (!isTodayClosingDay(r.billingDay || 0)) continue;
+          if (!isYesterdayClosingDay(r.billingDay || 0)) continue;
           const result = await createInvoiceAndProcess({
             clientId: r.clientId, divisionId: r.divisionId || "",
             items, deliveryRefs: [], deliveryRefItems: [], deliveryIds: [],
@@ -357,6 +369,69 @@ export default async function handler(req, res) {
         results.errors.push({ scheduled: inv.docNo, error: e.message });
       }
     }
+  } catch (e) {
+    results.errors.push({ fatal: e.message });
+  }
+
+    // 4. 楽天・Amazon売上同期（前日分）
+    try {
+      const settingsSnap3 = await db.collection("settings").limit(1).get();
+      const co = settingsSnap3.empty ? {} : settingsSnap3.docs[0].data();
+
+      // 楽天sync
+      if (co.rakutenServiceSecret && co.rakutenLicenseKey) {
+        try {
+          const yesterday = yesterdayJST().toISOString().split("T")[0];
+          const auth = Buffer.from(`${co.rakutenServiceSecret}:${co.rakutenLicenseKey}`).toString("base64");
+          const searchRes = await fetch("https://api.rms.rakuten.co.jp/es/2.0/order/searchOrder/", {
+            method: "POST", headers: { Authorization: `ESA ${auth}`, "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({ dateType: 1, startDatetime: `${yesterday}T00:00:00+0900`, endDatetime: `${yesterday}T23:59:59+0900`, PaginationRequestModel: { requestRecordsAmount: 1000, requestPage: 1 }, orderProgressList: [100,200,300,400,500,600,700] }),
+          });
+          const searchData = await searchRes.json();
+          if (searchData.orderNumberList && searchData.orderNumberList.length > 0) {
+            const detailRes = await fetch("https://api.rms.rakuten.co.jp/es/2.0/order/getOrder/", {
+              method: "POST", headers: { Authorization: `ESA ${auth}`, "Content-Type": "application/json; charset=utf-8" },
+              body: JSON.stringify({ orderNumberList: searchData.orderNumberList, version: 7 }),
+            });
+            const detailData = await detailRes.json();
+            let totalAmount = 0, orderCount = 0;
+            (detailData.OrderModelList || []).forEach(order => {
+              if (order.orderStatus === 999) return;
+              const itemTotal = (order.PackageModelList || []).reduce((s, pkg) => s + (pkg.ItemModelList || []).reduce((s2, item) => s2 + (item.price || 0) * (item.units || 1), 0), 0);
+              totalAmount += itemTotal - (order.couponAllTotalPrice || 0);
+              orderCount++;
+            });
+            if (orderCount > 0) {
+              await db.collection("externalSales").doc(`${yesterday}_rakuten`).set({ source: "rakuten", date: yesterday, totalAmount, orderCount, syncedAt: FieldValue.serverTimestamp() });
+            }
+          }
+          results.rakutenSync = { date: yesterday, ok: true };
+        } catch (e) { results.errors.push({ rakutenSync: e.message }); }
+      }
+
+      // Amazon sync
+      if (co.amazonClientId && co.amazonClientSecret && co.amazonRefreshToken) {
+        try {
+          const yesterday = yesterdayJST().toISOString().split("T")[0];
+          const tokenRes = await fetch("https://api.amazon.com/auth/o2/token", {
+            method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: `grant_type=refresh_token&refresh_token=${co.amazonRefreshToken}&client_id=${co.amazonClientId}&client_secret=${co.amazonClientSecret}`,
+          });
+          const tokenData = await tokenRes.json();
+          if (tokenData.access_token) {
+            const metricsRes = await fetch(`https://sellingpartnerapi-fe.amazon.com/sales/v1/orderMetrics?marketplaceIds=A1VC38T7YXB528&interval=${yesterday}T00:00:00-00:00--${yesterday}T23:59:59-00:00&granularity=Total`, {
+              headers: { "x-amz-access-token": tokenData.access_token },
+            });
+            const metricsData = await metricsRes.json();
+            const metrics = metricsData.payload?.[0];
+            if (metrics && metrics.totalSales) {
+              await db.collection("externalSales").doc(`${yesterday}_amazon`).set({ source: "amazon", date: yesterday, totalAmount: metrics.totalSales.amount || 0, orderCount: metrics.unitCount || 0, syncedAt: FieldValue.serverTimestamp() });
+            }
+          }
+          results.amazonSync = { date: yesterday, ok: true };
+        } catch (e) { results.errors.push({ amazonSync: e.message }); }
+      }
+    } catch (e) { results.errors.push({ syncFatal: e.message }); }
   } catch (e) {
     results.errors.push({ fatal: e.message });
   }
