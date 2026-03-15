@@ -306,7 +306,7 @@ function buildMeisaiHTML(inv, clients, co, bal) {
   const carry = prev - paid;
   const total = carry + invTotal;
   const refs = inv.deliveryRefs || [];
-  const refItems = inv.deliveryRefItems || [];
+  const refItems = typeof inv.deliveryRefItems === "string" ? JSON.parse(inv.deliveryRefItems) : (inv.deliveryRefItems || []);
   let rows = "";
   if (paid > 0) rows += `<tr><td>${inv.date}</td><td>振込</td><td></td><td></td><td></td><td class="nr" style="color:green">¥${fmt(paid)}</td></tr>`;
   if (refs.length > 0) {
@@ -413,7 +413,7 @@ function printMeisai(inv,clients,co,bal){
   const carry=prev-paid;
   const total=carry+invTotal;
   const refs=inv.deliveryRefs||[];
-  const refItems=inv.deliveryRefItems||[];
+  const refItems=typeof inv.deliveryRefItems==="string"?JSON.parse(inv.deliveryRefItems):(inv.deliveryRefItems||[]);
 
   let rows="";
   if(paid>0) rows+=`<tr><td>${inv.date}</td><td>振込</td><td></td><td></td><td></td><td class="nr" style="color:green">¥${fmt(paid)}</td></tr>`;
@@ -1640,7 +1640,7 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
       dueDate: nextMonthEnd(period.end), billingType: "closing",
       closingDay: period.closingDay, closingPeriod: { start: period.start, end: period.end },
       deliveryRefs: dels.map(d => d.docNo),
-      deliveryRefItems: dels.map(d => d.items || []),
+      deliveryRefItems: JSON.stringify(dels.map(d => d.items || [])),
       items: allItems, subtotal: sub, tax, total: grandTotal,
       status: "unpaid", createdAt: serverTimestamp(),
     };
@@ -3635,7 +3635,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
         inv.closingDay = p.closingDay;
         inv.closingPeriod = p.closingPeriod;
         inv.deliveryRefs = p.deliveryDocNos || [];
-        inv.deliveryRefItems = typeof p.deliveryRefItems === "string" ? JSON.parse(p.deliveryRefItems) : (p.deliveryRefItems || []);
+        inv.deliveryRefItems = typeof p.deliveryRefItems === "string" ? p.deliveryRefItems : JSON.stringify(p.deliveryRefItems || []);
       } else {
         inv.deliveryRef = p.deliveryDocNo || "";
         inv.deliveryRefs = p.deliveryDocNo ? [p.deliveryDocNo] : [];

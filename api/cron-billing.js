@@ -109,7 +109,7 @@ async function createInvoiceAndProcess({ clientId, divisionId, items, deliveryRe
     billingType: type === "recurring" ? "recurring" : "closing",
     closingDay: billingDay,
     deliveryRefs: deliveryRefs || [],
-    deliveryRefItems: deliveryRefItems || [],
+    deliveryRefItems: Array.isArray(deliveryRefItems) ? JSON.stringify(deliveryRefItems) : (deliveryRefItems || "[]"),
     items, subtotal: sub, tax, total,
     status: "unpaid", createdAt: FieldValue.serverTimestamp(),
   };
