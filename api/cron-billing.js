@@ -227,7 +227,7 @@ export default async function handler(req, res) {
               items: allItems, subtotal: sub, tax, total,
               billingType: "closing", closingDay: cd,
               closingPeriod: { start: period.start, end: period.end },
-              deliveryRefItems: dels.map(d => d.data().items || []),
+              deliveryRefItems: JSON.stringify(dels.map(d => d.data().items || [])),
               scheduledSendDate: "",
               status: "pending", createdAt: FieldValue.serverTimestamp(),
             });
@@ -237,7 +237,7 @@ export default async function handler(req, res) {
               clientId: client.id, divisionId: client.divisionId || "",
               items: allItems,
               deliveryRefs: dels.map(d => d.data().docNo),
-              deliveryRefItems: dels.map(d => d.data().items || []),
+              deliveryRefItems: JSON.stringify(dels.map(d => d.data().items || [])),
               deliveryIds: dels.map(d => d.id),
               type: "closing", sendMode: client.sendMode || "manual",
               billingDay: cd,

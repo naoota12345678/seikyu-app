@@ -1628,7 +1628,7 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
         items: allItems, subtotal: sub, tax, total: grandTotal,
         billingType: "closing", closingDay: period.closingDay,
         closingPeriod: { start: period.start, end: period.end },
-        deliveryRefItems: dels.map(d => d.items || []),
+        deliveryRefItems: JSON.stringify(dels.map(d => d.items || [])),
         scheduledSendDate: sendDate || "",
         status: "pending", createdAt: serverTimestamp(),
       });
@@ -3634,7 +3634,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
         inv.closingDay = p.closingDay;
         inv.closingPeriod = p.closingPeriod;
         inv.deliveryRefs = p.deliveryDocNos || [];
-        inv.deliveryRefItems = p.deliveryRefItems || [];
+        inv.deliveryRefItems = typeof p.deliveryRefItems === "string" ? JSON.parse(p.deliveryRefItems) : (p.deliveryRefItems || []);
       } else {
         inv.deliveryRef = p.deliveryDocNo || "";
         inv.deliveryRefs = p.deliveryDocNo ? [p.deliveryDocNo] : [];
