@@ -282,11 +282,11 @@ export default async function handler(req, res) {
           const { sub, tax, total } = totalFromItems(items);
           const clientDoc2 = await db.collection("clients").doc(r.clientId).get();
           const clientName = clientDoc2.exists ? clientDoc2.data().name || "" : "";
-          // 発行予定日を計算
-          const now = new Date();
-          const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-          const bd = (r.billingDay || 0) === 0 ? lastDay : Math.min(r.billingDay, lastDay);
-          const billingDate = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(bd).padStart(2,"0")}`;
+          // 発行予定日を計算（JST基準）
+          const jNow = jstNow();
+          const lastDay2 = new Date(jNow.getFullYear(), jNow.getMonth() + 1, 0).getDate();
+          const bd = (r.billingDay || 0) === 0 ? lastDay2 : Math.min(r.billingDay, lastDay2);
+          const billingDate = `${jNow.getFullYear()}-${String(jNow.getMonth()+1).padStart(2,"0")}-${String(bd).padStart(2,"0")}`;
           await db.collection("pendingBillings").add({
             type: "invoice", clientId: r.clientId, clientName,
             divisionId: r.divisionId || "",
