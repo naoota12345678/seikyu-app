@@ -3611,6 +3611,7 @@ function RecurringPage({ clients, divisions, invoices, company, balances, isAdmi
 function PendingPage({ clients, company, divisions, balances, isAdmin, invoices }) {
   const [pendings, setPendings] = useState([]);
   const [sending, setSending] = useState(null);
+  const [previewTarget, setPreviewTarget] = useState(null);
 
   useEffect(() => {
     const unsub = onSnapshot(query(collection(db, "pendingBillings"), orderBy("createdAt", "desc")), snap => {
@@ -3780,6 +3781,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
                             {company?.stripeSecretKey && <button style={{ ...s.btn("primary"), padding: "4px 10px", fontSize: 12, background: "#635BFF" }} onClick={() => approve(p, "stripe")} disabled={!!sending}>{sending===p.id ? "処理中..." : "💳 Stripe送信"}</button>}
                           </>}
                           <button style={{ ...s.btn("red"), padding: "4px 10px", fontSize: 12 }} onClick={() => reject(p)}>却下</button>
+                          <button style={{ ...s.btn("light"), padding: "4px 10px", fontSize: 12 }} onClick={() => setPreviewTarget(p)}>👁 内容</button>
                         </div>
                       ) : (
                         <span style={{ fontSize: 12, color: C.gray }}>管理者のみ</span>
@@ -3816,6 +3818,79 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
           </table>
         </div>
       )}
+      {previewTarget && (() => {
+        const p = previewTarget;
+        const cl = clients.find(c => c.id === p.clientId) || {};
+        const div = divisions?.find(d => d.id === p.divisionId);
+        const co = div ? { ...company, ...Object.fromEntries(Object.entries(div).filter(([,v]) => v)) } : company;
+        const items = p.items || [];
+        return (
+          <div style={s.modal} onClick={() => setPreviewTarget(null)}>
+            <div style={{ ...s.modalBox, maxWidth: 640 }} onClick={e => e.stopPropagation()}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
+                <h3 style={{ margin: 0, color: C.navy }}>承認待ち内容確認</h3>
+                <button style={s.btn("light")} onClick={() => setPreviewTarget(null)}>✕</button>
+              </div>
+              <div style={{ background: C.pale, padding: 16, borderRadius: 8, marginBottom: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 16, fontWeight: 700 }}>{cl.name || p.clientName}</div>
+                    <div style={{ fontSize: 12, color: C.gray, marginTop: 4 }}>{cl.email || p.email || "メール未設定"}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <span style={s.badge(p.type==="invoice"?"navy":p.type==="re-request-email"?"red":"gold")}>{p.type==="invoice"?"請求書発行":p.type==="re-request-email"?"✉再請求":p.type==="re-request-stripe"?"💳Stripe":"締日/定期"}</span>
+                  </div>
+                </div>
+                {p.billingType === "closing" && p.closingPeriod && (
+                  <div style={{ fontSize: 12, color: C.navy }}>対象期間: {p.closingPeriod.start} ～ {p.closingPeriod.end}</div>
+                )}
+                {p.scheduledSendDate && <div style={{ fontSize: 12, color: C.navy, marginTop: 4 }}>送信予定日: {p.scheduledSendDate}</div>}
+              </div>
+              {items.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>明細</div>
+                  <table style={s.table}>
+                    <thead><tr><th style={s.th}>品名</th><th style={s.th}>数量</th><th style={s.th}>単価</th><th style={{ ...s.th, textAlign: "right" }}>金額</th></tr></thead>
+                    <tbody>
+                      {items.map((item, i) => (
+                        <tr key={i}>
+                          <td style={s.td}>{item.name}</td>
+                          <td style={s.td}>{item.qty} {item.unit}</td>
+                          <td style={s.td}>¥{fmt(item.price)}</td>
+                          <td style={{ ...s.td, textAlign: "right" }}>¥{fmt((item.qty || 0) * (item.price || 0))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {p.message && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>メール本文</div>
+                  <div style={{ background: "#f8f9fa", padding: 12, borderRadius: 8, fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{p.message}</div>
+                </div>
+              )}
+              <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontSize: 20, fontWeight: 700, color: C.navy }}>合計: ¥{fmt(p.total)}</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {isAdmin && <>
+                    {p.status === "pending" && <>
+                      {p.type === "invoice" ? (
+                        <button style={{ ...s.btn("green"), fontSize: 13 }} onClick={() => { setPreviewTarget(null); approveInvoice(p); }} disabled={!!sending}>承認・発行</button>
+                      ) : <>
+                        <button style={{ ...s.btn("green"), fontSize: 13 }} onClick={() => { setPreviewTarget(null); approve(p, "email"); }} disabled={!!sending}>✉ メール送信</button>
+                        {company?.stripeSecretKey && <button style={{ ...s.btn("primary"), fontSize: 13, background: "#635BFF" }} onClick={() => { setPreviewTarget(null); approve(p, "stripe"); }} disabled={!!sending}>💳 Stripe</button>}
+                      </>}
+                      <button style={{ ...s.btn("red"), fontSize: 13 }} onClick={() => { setPreviewTarget(null); reject(p); }}>却下</button>
+                    </>}
+                  </>}
+                  <button style={s.btn("light")} onClick={() => setPreviewTarget(null)}>閉じる</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
