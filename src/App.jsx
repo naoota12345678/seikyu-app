@@ -935,7 +935,7 @@ function Dashboard({ clients, deliveries, invoices, balances }) {
                 <td style={s.td}>{d.docNo}</td><td style={s.td}>{d.date}</td>
                 <td style={s.td}>{clients.find(c => c.id === d.clientId)?.name || "—"}</td>
                 <td style={s.td}>¥{fmt(d.total)}</td>
-                <td style={s.td}><span style={s.badge(d.status === "invoiced" ? "green" : "gold")}>{d.status === "invoiced" ? "請求済" : "未請求"}</span></td>
+                <td style={s.td}><span style={s.badge(d.status === "invoiced" ? "green" : d.status === "pending_approval" ? "blue" : "gold")}>{d.status === "invoiced" ? "請求済" : d.status === "pending_approval" ? "承認待ち" : "未請求"}</span></td>
               </tr>
             ))}
           </tbody>
@@ -969,6 +969,8 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
         billingType: "immediate", scheduledSendDate: sendDate || "",
         status: "pending", createdAt: serverTimestamp(),
       });
+      // 納品書を承認待ち状態にマーク
+      await updateDoc(doc(db, "deliveries", d.id), { status: "pending_approval" });
       alert("承認待ちに追加しました。承認後に請求書が発行されます。");
       return;
     }
@@ -1010,12 +1012,12 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
                   <td style={s.td}>{d.docNo}</td><td style={s.td}>{d.date}</td>
                   <td style={s.td}>{client?.name || "—"}<br /><span style={{ fontSize: 11, color: C.gray }}>{(client?.billingType === "closing" || client?.billingType === "monthly") ? closingDaysLabel(client?.closingDays || [0]) : "即時"}</span></td>
                   <td style={s.td}>¥{fmt(d.total)}</td>
-                  <td style={s.td}><span style={s.badge(d.status === "invoiced" ? "green" : "gold")}>{d.status === "invoiced" ? "請求済" : "未請求"}</span></td>
+                  <td style={s.td}><span style={s.badge(d.status === "invoiced" ? "green" : d.status === "pending_approval" ? "blue" : "gold")}>{d.status === "invoiced" ? "請求済" : d.status === "pending_approval" ? "承認待ち" : "未請求"}</span></td>
                   <td style={s.td}>
                     <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                       <button style={{ ...s.btn("light"), padding: "4px 8px", fontSize: 12 }} onClick={() => { setEditing(d); setShowForm(true); }}>編集</button>
                       <button style={{ ...s.btn("light"), padding: "4px 8px", fontSize: 12 }} onClick={() => setPrintTarget({ delivery: d, invoice: invoices.find(i => i.deliveryRef === d.docNo) })}>🖨 印刷</button>
-                      {d.status !== "invoiced" && client?.billingType !== "closing" && client?.billingType !== "monthly" && (
+                      {d.status === "unissued" && client?.billingType !== "closing" && client?.billingType !== "monthly" && (
                         <button style={{ ...s.btn("gold"), padding: "4px 8px", fontSize: 12 }} onClick={() => { setScheduleTarget(d); setScheduledSendDate(""); }}>請求書発行</button>
                       )}
                       {isAdmin && <button style={{ ...s.btn("red"), padding: "4px 8px", fontSize: 12 }} onClick={() => deleteD(d.id)}>削除</button>}
@@ -1614,7 +1616,7 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
 
   const issueClosing = async (client, period, sendDate) => {
     const dels = deliveries.filter(d =>
-      d.clientId === client.id && d.status !== "invoiced" &&
+      d.clientId === client.id && d.status === "unissued" &&
       d.date >= period.start && d.date <= period.end
     );
     if (!dels.length) return alert("対象の未請求納品書がありません");
@@ -1632,6 +1634,10 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
         scheduledSendDate: sendDate || "",
         status: "pending", createdAt: serverTimestamp(),
       });
+      // 納品書を承認待ち状態にマーク
+      const batch2 = writeBatch(db);
+      dels.forEach(d => batch2.update(doc(db, "deliveries", d.id), { status: "pending_approval" }));
+      await batch2.commit();
       alert(`承認待ちに追加しました（${dels.length}件まとめ、${period.label}）`);
       return;
     }
@@ -1684,7 +1690,7 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
               const dels = deliveries.filter(d =>
                 d.clientId === client.id && d.date >= period.start && d.date <= period.end
               );
-              const unissued = dels.filter(d => d.status !== "invoiced");
+              const unissued = dels.filter(d => d.status === "unissued");
               const unissuedItems = unissued.flatMap(d => d.items || []);
               const { total: unissuedTotal } = totalFromItems(unissuedItems);
               const existInv = invoices.find(i =>
@@ -1710,7 +1716,7 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
                         <tr key={d.id}>
                           <td style={s.td}>{d.docNo}</td><td style={s.td}>{d.date}</td>
                           <td style={s.td}>¥{fmt(d.total)}</td>
-                          <td style={s.td}><span style={s.badge(d.status === "invoiced" ? "green" : "gold")}>{d.status === "invoiced" ? "請求済" : "未請求"}</span></td>
+                          <td style={s.td}><span style={s.badge(d.status === "invoiced" ? "green" : d.status === "pending_approval" ? "blue" : "gold")}>{d.status === "invoiced" ? "請求済" : d.status === "pending_approval" ? "承認待ち" : "未請求"}</span></td>
                         </tr>
                       ))}
                       {!dels.length && <tr><td colSpan={4} style={{ ...s.td, textAlign: "center", color: C.gray }}>この期間の納品書はありません</td></tr>}
@@ -1727,7 +1733,7 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
         clients={clients} company={company} balances={balances} divisions={divisions} onClose={() => setPrintTarget(null)} />}
       {scheduleTarget && (() => {
         const { client, period } = scheduleTarget;
-        const dels = deliveries.filter(d => d.clientId === client.id && d.status !== "invoiced" && d.date >= period.start && d.date <= period.end);
+        const dels = deliveries.filter(d => d.clientId === client.id && d.status === "unissued" && d.date >= period.start && d.date <= period.end);
         const { total: unissuedTotal } = totalFromItems(dels.flatMap(d => d.items || []));
         const closingDate = getNextClosingDate(client.closingDays || [0]);
         return (
@@ -3796,6 +3802,11 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
   const reject = async (p) => {
     if (!confirm("この承認待ちを却下しますか？")) return;
     await updateDoc(doc(db, "pendingBillings", p.id), { status: "rejected", rejectedAt: serverTimestamp() });
+    // 納品書をunissuedに戻す
+    const delIds = p.deliveryIds ? (Array.isArray(p.deliveryIds) ? p.deliveryIds : [p.deliveryIds]) : (p.deliveryId ? [p.deliveryId] : []);
+    for (const did of delIds) {
+      await updateDoc(doc(db, "deliveries", did), { status: "unissued", invoiceId: "" });
+    }
   };
 
   const pending = pendings.filter(p => p.status === "pending");

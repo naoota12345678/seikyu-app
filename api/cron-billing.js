@@ -231,6 +231,10 @@ export default async function handler(req, res) {
               scheduledSendDate: "",
               status: "pending", createdAt: FieldValue.serverTimestamp(),
             });
+            // 納品書を承認待ち状態にマーク（再取得防止）
+            const batch2 = db.batch();
+            dels.forEach(d => batch2.update(db.collection("deliveries").doc(d.id), { status: "pending_approval" }));
+            await batch2.commit();
             results.closing.push({ client: client.name, pending: true });
           } else {
             const result = await createInvoiceAndProcess({
