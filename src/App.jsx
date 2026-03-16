@@ -3655,7 +3655,55 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
         paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
       });
       await updateDoc(doc(db, "pendingBillings", p.id), { status: "approved", approvedAt: serverTimestamp(), invoiceDocNo: inv.docNo });
-      alert(`請求書 ${inv.docNo} を発行しました`);
+
+      // 承認後メール自動送信（scheduledSendDate未設定 or 今日以前なら即送信）
+      const email = cl.email;
+      if (email && (!inv.scheduledSendDate || inv.scheduledSendDate <= today())) {
+        try {
+          const co = company || {};
+          let coInfo = co;
+          if (p.divisionId) {
+            const div = divisions.find(d => d.id === p.divisionId);
+            if (div) coInfo = { ...co, ...Object.fromEntries(Object.entries(div).filter(([,v]) => v)) };
+          }
+          const res = await fetch("/api/send-invoice", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              to: email,
+              subject: `【請求書】${inv.docNo} ${coInfo.name || ""}`,
+              html: `<div style="font-family:sans-serif;color:#333;">
+                <p>${cl.name || ""} 御中</p>
+                <p>いつもお世話になっております。<br>${coInfo.name || ""}です。</p>
+                <p>請求書（${inv.docNo}）をお送りいたします。</p>
+                <p>金額：&yen;${fmt(p.total)}</p>
+                <p>ご確認のほど、よろしくお願いいたします。</p>
+                <hr style="border:none;border-top:1px solid #ddd;margin:20px 0">
+                <p style="font-size:12px;color:#888">${coInfo.name || ""}<br>${coInfo.address || ""}<br>TEL ${coInfo.tel || ""}</p>
+              </div>`,
+            }),
+          });
+          if (res.ok) {
+            await addDoc(collection(db, "sendHistory"), {
+              docNo: inv.docNo, invoiceId: invRef.id,
+              clientId: p.clientId, clientName: cl.name || "",
+              email, method: "auto", memo: "承認後自動送信",
+              amount: p.total, sentAt: serverTimestamp(), sentBy: "approval",
+            });
+            await updateDoc(doc(db, "invoices", invRef.id), { sentStatus: "sent", lastSentAt: serverTimestamp() });
+            alert(`請求書 ${inv.docNo} を発行し、${cl.name}（${email}）にメール送信しました`);
+          } else {
+            alert(`請求書 ${inv.docNo} を発行しました（メール送信に失敗しました。手動で送信してください）`);
+          }
+        } catch (e2) {
+          console.warn("承認後メール送信エラー:", e2.message);
+          alert(`請求書 ${inv.docNo} を発行しました（メール送信エラー: ${e2.message}）`);
+        }
+      } else {
+        alert(inv.scheduledSendDate
+          ? `請求書 ${inv.docNo} を発行しました（${inv.scheduledSendDate}に自動送信予定）`
+          : `請求書 ${inv.docNo} を発行しました`);
+      }
     } catch (e) { alert("エラー: " + e.message); }
     setSending(null);
   };

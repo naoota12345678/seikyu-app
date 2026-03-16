@@ -239,7 +239,7 @@ export default async function handler(req, res) {
               deliveryRefs: dels.map(d => d.data().docNo),
               deliveryRefItems: JSON.stringify(dels.map(d => d.data().items || [])),
               deliveryIds: dels.map(d => d.id),
-              type: "closing", sendMode: client.sendMode || "manual",
+              type: "closing", sendMode: client.sendMode || "auto",
               billingDay: cd,
             });
             results.closing.push({ client: client.name, ...result });
