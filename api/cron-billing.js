@@ -373,10 +373,6 @@ export default async function handler(req, res) {
         results.errors.push({ scheduled: inv.docNo, error: e.message });
       }
     }
-  } catch (e) {
-    results.errors.push({ fatal: e.message });
-  }
-
     // 4. 楽天・Amazon売上同期（前日分）
     try {
       const settingsSnap3 = await db.collection("settings").limit(1).get();
