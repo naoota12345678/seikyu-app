@@ -2310,7 +2310,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
   const [reRequestMenu, setReRequestMenu] = useState(null);
   const [emailSending, setEmailSending] = useState(false);
   const [reRequestMsg, setReRequestMsg] = useState("");
-  const [ledgerFilterClient, setLedgerFilterClient] = useState("");
+
   const [openingTarget, setOpeningTarget] = useState(null);
   const [openingAmount, setOpeningAmount] = useState("");
   const [openingDate, setOpeningDate] = useState(today().slice(0, 7) + "-01");
@@ -2462,21 +2462,53 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
                     </span>
                   )}
                 </div>
-                {clientInvoices.length > 0 && (
-                  <table style={s.table}>
-                    <thead><tr><th style={s.th}>請求番号</th><th style={s.th}>日付</th><th style={s.th}>金額</th><th style={s.th}>状態</th></tr></thead>
-                    <tbody>
-                      {clientInvoices.slice(0, 10).map(inv => (
-                        <tr key={inv.id}>
-                          <td style={s.td}>{inv.docNo}</td>
-                          <td style={s.td}>{inv.date}</td>
-                          <td style={s.td}>¥{fmt(inv.total)}</td>
-                          <td style={s.td}><span style={s.badge(inv.status === "paid" ? "green" : inv.dueDate && inv.dueDate < today() ? "red" : "gold")}>{inv.status === "paid" ? "入金済" : inv.dueDate && inv.dueDate < today() ? "期限超過" : "未収"}</span></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
+                {(() => {
+                  // この取引先の元帳
+                  const bal = client.bal || {};
+                  const entries = [];
+                  if (bal.openingBalance && bal.openingBalance > 0) {
+                    entries.push({ date: bal.openingDate || "0000-00-00", type: "opening", description: "期首残高（繰越）", debit: bal.openingBalance, credit: 0 });
+                  }
+                  clientInvoices.forEach(inv => {
+                    entries.push({ date: inv.date || "", type: "invoice", description: `請求書 ${inv.docNo}`, debit: inv.total || 0, credit: 0, status: inv.status, dueDate: inv.dueDate || "" });
+                  });
+                  (paymentHistory || []).filter(p => p.clientId === client.id).forEach(ph => {
+                    entries.push({ date: ph.date || "", type: "payment", description: "入金", debit: 0, credit: ph.amount || 0, phId: ph.id });
+                  });
+                  entries.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+                  let running = 0;
+                  const withBal = entries.map(e => { running += e.debit - e.credit; return { ...e, balance: running }; });
+                  if (!withBal.length) return null;
+                  return (
+                    <table style={{ ...s.table, marginTop: 8 }}>
+                      <thead><tr>
+                        <th style={s.th}>日付</th><th style={s.th}>摘要</th>
+                        <th style={{ ...s.th, textAlign: "right" }}>借方</th>
+                        <th style={{ ...s.th, textAlign: "right" }}>貸方</th>
+                        <th style={{ ...s.th, textAlign: "right" }}>残高</th>
+                        <th style={s.th}></th>
+                      </tr></thead>
+                      <tbody>
+                        {withBal.slice(-20).map((e, i) => (
+                          <tr key={i} style={{ background: e.type === "payment" ? "#f0fff0" : e.type === "opening" ? "#f0f4ff" : "transparent" }}>
+                            <td style={s.td}>{e.date}</td>
+                            <td style={s.td}>
+                              {e.type === "opening" && <span style={s.badge("navy")}>繰越</span>}
+                              {e.type === "invoice" && (() => { const ov = e.status === "unpaid" && e.dueDate && e.dueDate < today(); return <span style={s.badge(e.status === "paid" ? "green" : ov ? "red" : "gold")}>{e.status === "paid" ? "入金済" : ov ? "期限超過" : "未収"}</span>; })()}
+                              {" "}{e.description}
+                            </td>
+                            <td style={{ ...s.td, textAlign: "right", color: e.debit ? C.red : "transparent" }}>{e.debit ? `¥${fmt(e.debit)}` : ""}</td>
+                            <td style={{ ...s.td, textAlign: "right", color: e.credit ? C.green : "transparent" }}>{e.credit ? `¥${fmt(e.credit)}` : ""}</td>
+                            <td style={{ ...s.td, textAlign: "right", fontWeight: 700, color: e.balance > 0 ? C.red : C.green }}>¥{fmt(e.balance)}</td>
+                            <td style={s.td}>{e.type === "payment" && e.phId && (
+                              <button style={{ ...s.btn("red"), padding: "3px 8px", fontSize: 11 }} onClick={() => cancelPayment(paymentHistory.find(p => p.id === e.phId))}>取消</button>
+                            )}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  );
+                })()}
               </div>
             )}
           </div>
@@ -2682,97 +2714,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
           </div>
         );
       })()}
-      {/* 取引先元帳 */}
-      {(() => {
-        // 全取引先の元帳データを生成
-        const ledgerEntries = [];
-        // 期首残高（繰越）
-        clients.forEach(cl => {
-          const bal = balances[cl.id] || {};
-          if (bal.openingBalance && bal.openingBalance > 0) {
-            ledgerEntries.push({
-              date: bal.openingDate || "0000-00-00", clientId: cl.id, clientName: cl.name || "—",
-              type: "opening", description: "期首残高（繰越）",
-              debit: bal.openingBalance, credit: 0,
-            });
-          }
-        });
-        // 請求書発行（借方 = 残高増）
-        invoices.forEach(inv => {
-          const cl = clients.find(c => c.id === inv.clientId);
-          ledgerEntries.push({
-            date: inv.date || "", clientId: inv.clientId, clientName: cl?.name || "—",
-            type: "invoice", description: `請求書 ${inv.docNo}`,
-            debit: inv.total || 0, credit: 0, docNo: inv.docNo, status: inv.status, dueDate: inv.dueDate || "",
-          });
-        });
-        // 入金（貸方 = 残高減）
-        (paymentHistory || []).forEach(ph => {
-          ledgerEntries.push({
-            date: ph.date || "", clientId: ph.clientId, clientName: ph.clientName || "—",
-            type: "payment", description: "入金",
-            debit: 0, credit: ph.amount || 0, phId: ph.id,
-          });
-        });
-        // 日付順ソート
-        ledgerEntries.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
-        const filteredLedger = ledgerFilterClient
-          ? ledgerEntries.filter(e => e.clientId === ledgerFilterClient)
-          : ledgerEntries;
-        // 残高を積み上げ計算
-        const clientRunning = {};
-        const withBalance = filteredLedger.map(e => {
-          const key = e.clientId;
-          if (!clientRunning[key]) clientRunning[key] = 0;
-          clientRunning[key] += e.debit - e.credit;
-          return { ...e, balance: clientRunning[key] };
-        });
-        return (
-          <div style={s.card}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <div style={{ fontSize: 16, fontWeight: 700, color: C.navy }}>取引先元帳</div>
-              <select style={{ ...s.input, maxWidth: 240 }} value={ledgerFilterClient} onChange={e => setLedgerFilterClient(e.target.value)}>
-                <option value="">すべての取引先</option>
-                {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
-            {withBalance.length > 0 ? (
-              <table style={s.table}>
-                <thead><tr>
-                  <th style={s.th}>日付</th>
-                  <th style={s.th}>取引先</th>
-                  <th style={s.th}>摘要</th>
-                  <th style={{ ...s.th, textAlign: "right" }}>借方（請求）</th>
-                  <th style={{ ...s.th, textAlign: "right" }}>貸方（入金）</th>
-                  <th style={{ ...s.th, textAlign: "right" }}>残高</th>
-                  <th style={s.th}>操作</th>
-                </tr></thead>
-                <tbody>
-                  {withBalance.slice(-100).map((e, i) => (
-                    <tr key={i} style={{ background: e.type === "payment" ? "#f0fff0" : e.type === "opening" ? "#f0f4ff" : "transparent" }}>
-                      <td style={s.td}>{e.date}</td>
-                      <td style={s.td}>{e.clientName}</td>
-                      <td style={s.td}>
-                        {e.type === "opening" && <span style={s.badge("navy")}>繰越</span>}
-                        {e.type === "invoice" && (() => { const ov = e.status === "unpaid" && e.dueDate && e.dueDate < today(); return <span style={s.badge(e.status === "paid" ? "green" : ov ? "red" : "gold")}>{e.status === "paid" ? "入金済" : ov ? "期限超過" : "未収"}</span>; })()}
-                        {" "}{e.description}
-                      </td>
-                      <td style={{ ...s.td, textAlign: "right", color: e.debit ? C.red : "transparent" }}>{e.debit ? `¥${fmt(e.debit)}` : ""}</td>
-                      <td style={{ ...s.td, textAlign: "right", color: e.credit ? C.green : "transparent" }}>{e.credit ? `¥${fmt(e.credit)}` : ""}</td>
-                      <td style={{ ...s.td, textAlign: "right", fontWeight: 700, color: e.balance > 0 ? C.red : C.green }}>¥{fmt(e.balance)}</td>
-                      <td style={s.td}>{e.type === "payment" && e.phId && (
-                        <button style={{ ...s.btn("red"), padding: "3px 8px", fontSize: 11 }} onClick={() => cancelPayment(paymentHistory.find(p => p.id === e.phId))}>取消</button>
-                      )}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <div style={{ color: C.gray, textAlign: "center", padding: 20 }}>取引データがありません</div>
-            )}
-          </div>
-        );
-      })()}
+      {/* 元帳は各取引先カード内に統合 */}
     </div>
   );
 }
