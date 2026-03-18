@@ -1611,6 +1611,7 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
   const [printTarget, setPrintTarget] = useState(null);
   const [scheduleTarget, setScheduleTarget] = useState(null);
   const [scheduledSendDate, setScheduledSendDate] = useState("");
+  const [openClients, setOpenClients] = useState({});
   // 締日タイプの取引先（旧monthly互換含む）
   const closingClients = clients.filter(c => c.billingType === "closing" || c.billingType === "monthly");
 
@@ -1677,16 +1678,24 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
         const cDays = client.closingDays && client.closingDays.length ? client.closingDays : [0];
         const periods = getAllClosingPeriods(month, cDays);
         const bal = balances[client.id] || {};
+        const allDels = deliveries.filter(d => d.clientId === client.id && periods.some(p => d.date >= p.start && d.date <= p.end));
+        const unissuedCount = allDels.filter(d => d.status === "unissued").length;
+        const isOpen = openClients[client.id];
         return (
           <div key={client.id} style={s.card}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }} onClick={() => setOpenClients(prev => ({ ...prev, [client.id]: !prev[client.id] }))}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 12, color: C.gray }}>{isOpen ? "▼" : "▶"}</span>
                 <span style={{ fontWeight: 700, fontSize: 16, color: C.navy }}>{client.name}</span>
-                <span style={{ ...s.badge("gold"), marginLeft: 8 }}>{closingDaysLabel(cDays)}</span>
-                {bal.currentBalance > 0 && <span style={{ marginLeft: 12, fontSize: 13, color: C.red }}>残高：¥{fmt(bal.currentBalance)}</span>}
+                <span style={s.badge("gold")}>{closingDaysLabel(cDays)}</span>
+                {bal.currentBalance > 0 && <span style={{ fontSize: 13, color: C.red }}>残高：¥{fmt(bal.currentBalance)}</span>}
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <span style={{ fontSize: 13, color: C.gray }}>納品書 {allDels.length}件</span>
+                {unissuedCount > 0 && <span style={s.badge("gold")}>未請求 {unissuedCount}件</span>}
               </div>
             </div>
-            {periods.map((period, pi) => {
+            {isOpen && periods.map((period, pi) => {
               const dels = deliveries.filter(d =>
                 d.clientId === client.id && d.date >= period.start && d.date <= period.end
               );
@@ -2305,6 +2314,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
   const [openingTarget, setOpeningTarget] = useState(null);
   const [openingAmount, setOpeningAmount] = useState("");
   const [openingDate, setOpeningDate] = useState(today().slice(0, 7) + "-01");
+  const [openBalClients, setOpenBalClients] = useState({});
   const total = Object.values(balances).reduce((a, b) => a + (b.currentBalance || 0), 0);
 
   const cancelPayment = async (ph) => {
@@ -2408,27 +2418,35 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
           <button key={id} style={{ ...s.btn(filter===id?"primary":"light"), padding: "5px 14px", fontSize: 13 }} onClick={() => setFilter(id)}>{label}</button>
         ))}
       </div>
-      <div style={s.card}>
-        <table style={s.table}>
-          <thead><tr><th style={s.th}>取引先</th><th style={s.th}>請求タイプ</th><th style={s.th}>現在残高</th><th style={s.th}>直近入金</th><th style={s.th}>未入金</th><th style={s.th}>経過日数</th><th style={s.th}>操作</th></tr></thead>
-          <tbody>
-            {filtered.map(client => (
-              <tr key={client.id} style={{ background: client.isOverdue ? "#fff5f5" : "transparent" }}>
-                <td style={s.td}>
-                  <strong>{client.name}</strong>
-                  {client.isOverdue && <span style={{ ...s.badge("red"), marginLeft: 6, fontSize: 10 }}>要確認</span>}
-                </td>
-                <td style={s.td}><span style={s.badge((client.billingType==="closing"||client.billingType==="monthly")?"gold":"blue")}>{(client.billingType==="closing"||client.billingType==="monthly")?closingDaysLabel(client.closingDays||[0]):"即時"}</span></td>
-                <td style={{ ...s.td, fontWeight: 700, color: client.hasBalance ? C.red : C.green }}>¥{fmt(client.bal.currentBalance||0)}</td>
-                <td style={s.td}>{client.bal.lastPaidDate ? `${client.bal.lastPaidDate}　¥${fmt(client.bal.lastPaidAmount)}` : "—"}</td>
-                <td style={s.td}>{client.clientOverdue.length > 0 ? <span style={{ color: C.red, fontWeight: 700 }}>{client.clientOverdue.length}件　¥{fmt(client.clientOverdue.reduce((a,i)=>a+(i.total||0),0))}</span> : "—"}</td>
-                <td style={s.td}>{client.daysSinceOldest > 0 ? <span style={{ color: client.daysSinceOldest > 60 ? C.red : client.daysSinceOldest > 30 ? "#856404" : C.gray, fontWeight: 700 }}>{client.daysSinceOldest}日</span> : "—"}</td>
-                <td style={{...s.td,whiteSpace:"nowrap"}}>
-                  <button style={{ ...s.btn("gold"), padding: "4px 10px", fontSize: 12 }} onClick={() => setBalTarget({ client, balance: client.bal })}>入金記録</button>
-                  <button style={{ ...s.btn("light"), padding: "4px 10px", fontSize: 12, marginLeft: 4 }} onClick={() => { setOpeningTarget(client); setOpeningAmount(String(client.bal.openingBalance || 0)); setOpeningDate(client.bal.openingDate || today().slice(0,7)+"-01"); }}>期首残高</button>
+      {filtered.map(client => {
+        const isOpenBal = openBalClients[client.id];
+        const clientInvoices = invoices.filter(i => i.clientId === client.id).sort((a,b) => (b.date||"").localeCompare(a.date||""));
+        return (
+          <div key={client.id} style={{ ...s.card, background: client.isOverdue ? "#fff5f5" : "white" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }} onClick={() => setOpenBalClients(prev => ({ ...prev, [client.id]: !prev[client.id] }))}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 12, color: C.gray }}>{isOpenBal ? "▼" : "▶"}</span>
+                <strong style={{ fontSize: 15, color: C.navy }}>{client.name}</strong>
+                <span style={s.badge((client.billingType==="closing"||client.billingType==="monthly")?"gold":"blue")}>{(client.billingType==="closing"||client.billingType==="monthly")?closingDaysLabel(client.closingDays||[0]):"即時"}</span>
+                {client.isOverdue && <span style={{ ...s.badge("red"), fontSize: 10 }}>要確認</span>}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                <span style={{ fontWeight: 700, fontSize: 16, color: client.hasBalance ? C.red : C.green }}>¥{fmt(client.bal.currentBalance||0)}</span>
+                {client.clientOverdue.length > 0 && <span style={{ fontSize: 12, color: C.red }}>未入金 {client.clientOverdue.length}件</span>}
+              </div>
+            </div>
+            {isOpenBal && (
+              <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
+                <div style={{ display: "flex", gap: 16, marginBottom: 12, flexWrap: "wrap", fontSize: 13 }}>
+                  <div><span style={{ color: C.gray }}>直近入金：</span>{client.bal.lastPaidDate ? `${client.bal.lastPaidDate}　¥${fmt(client.bal.lastPaidAmount)}` : "—"}</div>
+                  {client.daysSinceOldest > 0 && <div><span style={{ color: C.gray }}>最長経過：</span><span style={{ color: client.daysSinceOldest > 60 ? C.red : client.daysSinceOldest > 30 ? "#856404" : C.gray, fontWeight: 700 }}>{client.daysSinceOldest}日</span></div>}
+                </div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+                  <button style={{ ...s.btn("gold"), padding: "5px 12px", fontSize: 12 }} onClick={e => { e.stopPropagation(); setBalTarget({ client, balance: client.bal }); }}>入金記録</button>
+                  <button style={{ ...s.btn("light"), padding: "5px 12px", fontSize: 12 }} onClick={e => { e.stopPropagation(); setOpeningTarget(client); setOpeningAmount(String(client.bal.openingBalance || 0)); setOpeningDate(client.bal.openingDate || today().slice(0,7)+"-01"); }}>期首残高</button>
                   {client.isOverdue && (
-                    <span style={{ position: "relative", display: "inline-block", marginLeft: 6 }}>
-                      <button style={{ ...s.btn("primary"), padding: "4px 10px", fontSize: 12, background: C.red }} onClick={() => setReRequestMenu(reRequestMenu === client.id ? null : client.id)}>再請求 ▼</button>
+                    <span style={{ position: "relative", display: "inline-block" }}>
+                      <button style={{ ...s.btn("primary"), padding: "5px 12px", fontSize: 12, background: C.red }} onClick={e => { e.stopPropagation(); setReRequestMenu(reRequestMenu === client.id ? null : client.id); }}>再請求 ▼</button>
                       {reRequestMenu === client.id && (
                         <div style={{ position: "absolute", top: "100%", right: 0, background: "white", border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.15)", zIndex: 100, minWidth: 180, marginTop: 4 }}>
                           <button style={{ display: "block", width: "100%", padding: "10px 16px", border: "none", background: "none", textAlign: "left", cursor: "pointer", fontSize: 13, color: C.navy }} onMouseOver={e=>e.target.style.background="#f0f0f0"} onMouseOut={e=>e.target.style.background="none"} onClick={() => { setReRequestMenu(null); setReRequestTarget(client); }}>
@@ -2443,12 +2461,27 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
                       )}
                     </span>
                   )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                </div>
+                {clientInvoices.length > 0 && (
+                  <table style={s.table}>
+                    <thead><tr><th style={s.th}>請求番号</th><th style={s.th}>日付</th><th style={s.th}>金額</th><th style={s.th}>状態</th></tr></thead>
+                    <tbody>
+                      {clientInvoices.slice(0, 10).map(inv => (
+                        <tr key={inv.id}>
+                          <td style={s.td}>{inv.docNo}</td>
+                          <td style={s.td}>{inv.date}</td>
+                          <td style={s.td}>¥{fmt(inv.total)}</td>
+                          <td style={s.td}><span style={s.badge(inv.status === "paid" ? "green" : inv.dueDate && inv.dueDate < today() ? "red" : "gold")}>{inv.status === "paid" ? "入金済" : inv.dueDate && inv.dueDate < today() ? "期限超過" : "未収"}</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
       {balTarget && <BalanceModal client={balTarget.client} balance={balTarget.balance} onClose={() => setBalTarget(null)} />}
       {openingTarget && (
         <div style={s.modal} onClick={() => setOpeningTarget(null)}>
