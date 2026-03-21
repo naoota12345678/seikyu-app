@@ -8,6 +8,7 @@ import {
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import { ref, uploadBytes, getDownloadURL, listAll } from "firebase/storage";
+import ManualPage from "./ManualPage";
 
 const C = {
   navy: "#1C2B4A", gold: "#B8905A", cream: "#F4F1EC",
@@ -4314,6 +4315,7 @@ export default function App() {
       { id: "pdfHistory", label: "📁 PDF履歴" },
     ]},
     { id: "settings", label: "⚙ 設定" },
+    { id: "manual", label: "📖 取扱説明書" },
   ];
 
   if (loading) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",fontSize:18,color:C.navy}}>読み込み中...</div>;
@@ -4361,6 +4363,7 @@ export default function App() {
         {page==="sendHistory"&&<SendHistoryPage isAdmin={isAdmin}/>}
         {page==="pdfHistory"&&<PDFHistoryPage isAdmin={isAdmin}/>}
         {page==="settings"&&<SettingsPage company={company} setCompany={setCompany} isAdmin={isAdmin} currentUser={user}/>}
+        {page==="manual"&&<ManualPage/>}
       </div>
     </div>
   );
