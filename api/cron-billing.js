@@ -373,63 +373,26 @@ export default async function handler(req, res) {
         results.errors.push({ scheduled: inv.docNo, error: e.message });
       }
     }
-    // 4. 楽天・Amazon売上同期（前日分）
+    // 4. 楽天・Amazon売上同期（前日分）― 専用APIに委譲
     try {
-      const settingsSnap3 = await db.collection("settings").limit(1).get();
-      const co = settingsSnap3.empty ? {} : settingsSnap3.docs[0].data();
+      const baseUrl = `https://${process.env.VERCEL_URL}`;
+      const syncHeaders = { Authorization: `Bearer ${process.env.CRON_SECRET}` };
 
-      // 楽天sync
-      if (co.rakutenServiceSecret && co.rakutenLicenseKey) {
-        try {
-          const yesterday = yesterdayJST().toISOString().split("T")[0];
-          const auth = Buffer.from(`${co.rakutenServiceSecret}:${co.rakutenLicenseKey}`).toString("base64");
-          const searchRes = await fetch("https://api.rms.rakuten.co.jp/es/2.0/order/searchOrder/", {
-            method: "POST", headers: { Authorization: `ESA ${auth}`, "Content-Type": "application/json; charset=utf-8" },
-            body: JSON.stringify({ dateType: 1, startDatetime: `${yesterday}T00:00:00+0900`, endDatetime: `${yesterday}T23:59:59+0900`, PaginationRequestModel: { requestRecordsAmount: 1000, requestPage: 1 }, orderProgressList: [100,200,300,400,500,600,700] }),
-          });
-          const searchData = await searchRes.json();
-          if (searchData.orderNumberList && searchData.orderNumberList.length > 0) {
-            const detailRes = await fetch("https://api.rms.rakuten.co.jp/es/2.0/order/getOrder/", {
-              method: "POST", headers: { Authorization: `ESA ${auth}`, "Content-Type": "application/json; charset=utf-8" },
-              body: JSON.stringify({ orderNumberList: searchData.orderNumberList, version: 7 }),
-            });
-            const detailData = await detailRes.json();
-            let totalAmount = 0, orderCount = 0;
-            (detailData.OrderModelList || []).forEach(order => {
-              if (order.orderStatus === 999) return;
-              const itemTotal = (order.PackageModelList || []).reduce((s, pkg) => s + (pkg.ItemModelList || []).reduce((s2, item) => s2 + (item.price || 0) * (item.units || 1), 0), 0);
-              totalAmount += itemTotal - (order.couponAllTotalPrice || 0);
-              orderCount++;
-            });
-            if (orderCount > 0) {
-              await db.collection("externalSales").doc(`${yesterday}_rakuten`).set({ source: "rakuten", date: yesterday, totalAmount, orderCount, syncedAt: FieldValue.serverTimestamp() });
-            }
-          }
-          results.rakutenSync = { date: yesterday, ok: true };
-        } catch (e) { results.errors.push({ rakutenSync: e.message }); }
+      const [rakutenRes, amazonRes] = await Promise.all([
+        fetch(`${baseUrl}/api/rakuten-sync`, { headers: syncHeaders }).catch(e => ({ ok: false, error: e.message })),
+        fetch(`${baseUrl}/api/amazon-sync`, { headers: syncHeaders }).catch(e => ({ ok: false, error: e.message })),
+      ]);
+
+      if (rakutenRes.ok && typeof rakutenRes.json === "function") {
+        results.rakutenSync = await rakutenRes.json();
+      } else {
+        results.errors.push({ rakutenSync: rakutenRes.error || `HTTP ${rakutenRes.status}` });
       }
 
-      // Amazon sync
-      if (co.amazonClientId && co.amazonClientSecret && co.amazonRefreshToken) {
-        try {
-          const yesterday = yesterdayJST().toISOString().split("T")[0];
-          const tokenRes = await fetch("https://api.amazon.com/auth/o2/token", {
-            method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: `grant_type=refresh_token&refresh_token=${co.amazonRefreshToken}&client_id=${co.amazonClientId}&client_secret=${co.amazonClientSecret}`,
-          });
-          const tokenData = await tokenRes.json();
-          if (tokenData.access_token) {
-            const metricsRes = await fetch(`https://sellingpartnerapi-fe.amazon.com/sales/v1/orderMetrics?marketplaceIds=A1VC38T7YXB528&interval=${yesterday}T00:00:00-00:00--${yesterday}T23:59:59-00:00&granularity=Total`, {
-              headers: { "x-amz-access-token": tokenData.access_token },
-            });
-            const metricsData = await metricsRes.json();
-            const metrics = metricsData.payload?.[0];
-            if (metrics && metrics.totalSales) {
-              await db.collection("externalSales").doc(`${yesterday}_amazon`).set({ source: "amazon", date: yesterday, totalAmount: metrics.totalSales.amount || 0, orderCount: metrics.unitCount || 0, syncedAt: FieldValue.serverTimestamp() });
-            }
-          }
-          results.amazonSync = { date: yesterday, ok: true };
-        } catch (e) { results.errors.push({ amazonSync: e.message }); }
+      if (amazonRes.ok && typeof amazonRes.json === "function") {
+        results.amazonSync = await amazonRes.json();
+      } else {
+        results.errors.push({ amazonSync: amazonRes.error || `HTTP ${amazonRes.status}` });
       }
     } catch (e) { results.errors.push({ syncFatal: e.message }); }
   } catch (e) {
