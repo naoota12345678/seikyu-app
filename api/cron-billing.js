@@ -375,7 +375,9 @@ export default async function handler(req, res) {
     }
     // 4. 楽天・Amazon売上同期（前日分）― 専用APIに委譲
     try {
-      const baseUrl = `https://${process.env.VERCEL_URL}`;
+      const baseUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
+        ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+        : "https://seikyu-app.vercel.app";
       const syncHeaders = { Authorization: `Bearer ${process.env.CRON_SECRET}` };
 
       const [rakutenRes, amazonRes] = await Promise.all([
