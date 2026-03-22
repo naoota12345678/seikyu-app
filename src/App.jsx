@@ -1838,6 +1838,62 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
     setSyncMsg("");
   };
 
+  // カラーミー同期
+  const syncColorMe = async (mode) => {
+    if (syncing) return;
+    setSyncing(true);
+    setSyncMsg("");
+    try {
+      if (mode === "initial") {
+        const now = new Date();
+        const months = [];
+        for (let i = 11; i >= 0; i--) {
+          const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+          const y = d.getFullYear(), m = d.getMonth() + 1;
+          const pad = (n) => String(n).padStart(2, "0");
+          const start = `${y}-${pad(m)}-01`;
+          const lastDay = new Date(y, m, 0).getDate();
+          const end = `${y}-${pad(m)}-${pad(lastDay)}`;
+          months.push({ start, end, label: `${y}年${m}月` });
+        }
+        let totalOrders = 0, totalDays = 0, errorCount = 0;
+        for (let i = 0; i < months.length; i++) {
+          const mo = months[i];
+          setSyncMsg(`カラーミー ${mo.label} を同期中... (${i + 1}/${months.length})`);
+          try {
+            const res = await fetch("/api/colorme-sync", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ mode: "range", start: mo.start, end: mo.end }),
+            });
+            const data = await res.json();
+            if (data.ok) { totalOrders += data.totalOrders || 0; totalDays += data.totalDays || 0; errorCount = 0; }
+            else { errorCount++; console.error(`カラーミー同期エラー (${mo.label}):`, data.error || data.message); if (errorCount >= 3) { alert(`カラーミー同期エラーが連続しました。中断します。\nエラー: ${data.error || data.message || "不明"}`); break; } }
+          } catch (fetchErr) { errorCount++; console.error(`カラーミー同期fetch失敗 (${mo.label}):`, fetchErr); if (errorCount >= 3) { alert(`カラーミー同期エラーが連続しました。中断します。\nエラー: ${fetchErr.message}`); break; } }
+          if (i < months.length - 1) await new Promise(r => setTimeout(r, 2000));
+        }
+        setSyncMsg("");
+        alert(`カラーミー初期同期完了: ${totalOrders}件、${totalDays}日分`);
+      } else {
+        const res = await fetch("/api/colorme-sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: "today" }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          alert(`カラーミー同期完了: ${data.totalOrders}件、${data.totalDays}日分`);
+        } else {
+          alert(data.message || data.error || "同期に失敗しました");
+        }
+      }
+    } catch (e) {
+      alert("同期エラー: " + e.message);
+    }
+    setSyncing(false);
+    setSyncMsg("");
+  };
+
   // Amazon同期
   const syncAmazon = async (mode) => {
     if (syncing) return;
@@ -2075,6 +2131,7 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button style={{ ...s.btn("primary"), opacity: syncing ? 0.6 : 1 }} onClick={() => syncRakuten("today")} disabled={syncing}>{syncing ? "同期中..." : "楽天 今日同期"}</button>
           <button style={{ ...s.btn("primary"), background: "#FF9900", opacity: syncing ? 0.6 : 1 }} onClick={() => syncAmazon("today")} disabled={syncing}>{syncing ? "同期中..." : "Amazon 今日同期"}</button>
+          <button style={{ ...s.btn("primary"), background: "#E95295", opacity: syncing ? 0.6 : 1 }} onClick={() => syncColorMe("today")} disabled={syncing}>{syncing ? "同期中..." : "カラーミー 今日同期"}</button>
           <label style={{ ...s.btn("gold"), display: "inline-block", cursor: importing ? "wait" : "pointer", opacity: importing ? 0.6 : 1 }}>
             {importing ? "インポート中..." : "CSV 売上取込"}
             <input type="file" accept=".csv" style={{ display: "none" }} onChange={handleCSVImport} disabled={importing} />
@@ -3939,8 +3996,10 @@ function SettingsPage({ company, setCompany, isAdmin, currentUser }) {
   const runInitialSync = async (source) => {
     if (syncing) return;
     setSyncing(true); setSyncMsg("");
-    const endpoint = source === "rakuten" ? "/api/rakuten-sync" : "/api/amazon-sync";
-    const label = source === "rakuten" ? "楽天" : "Amazon";
+    const endpoints = { rakuten: "/api/rakuten-sync", amazon: "/api/amazon-sync", colorme: "/api/colorme-sync" };
+    const labels = { rakuten: "楽天", amazon: "Amazon", colorme: "カラーミー" };
+    const endpoint = endpoints[source];
+    const label = labels[source];
     try {
       const now = new Date();
       const months = [];
@@ -4037,6 +4096,13 @@ function SettingsPage({ company, setCompany, isAdmin, currentUser }) {
               <div style={s.col}><span style={s.label}>Refresh Token</span><input style={{...s.input,minWidth:220}} type="password" value={form.amazonRefreshToken||""} onChange={e=>setF("amazonRefreshToken",e.target.value)} placeholder="未設定" /></div>
             </div>
             <button style={{...s.btn("light"),marginTop:8,fontSize:12}} onClick={() => { if(confirm("Amazonの過去1年分を取得します。"))runInitialSync("amazon"); }} disabled={syncing}>{syncMsg && syncMsg.includes("Amazon") ? syncMsg : "Amazon 初期同期（過去1年）"}</button>
+          </div>
+          <div>
+            <div style={{fontWeight:600,fontSize:14,color:C.navy,marginBottom:8}}>カラーミーショップ</div>
+            <div style={s.row}>
+              <div style={s.col}><span style={s.label}>アクセストークン</span><input style={{...s.input,minWidth:220}} type="password" value={form.colormeAccessToken||""} onChange={e=>setF("colormeAccessToken",e.target.value)} placeholder="未設定" /></div>
+            </div>
+            <button style={{...s.btn("light"),marginTop:8,fontSize:12}} onClick={() => { if(confirm("カラーミーの過去1年分を取得します。"))runInitialSync("colorme"); }} disabled={syncing}>{syncMsg && syncMsg.includes("カラーミー") ? syncMsg : "カラーミー 初期同期（過去1年）"}</button>
           </div>
         </div>
       </div>

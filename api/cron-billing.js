@@ -380,9 +380,10 @@ export default async function handler(req, res) {
         : "https://seikyu-app.vercel.app";
       const syncHeaders = { Authorization: `Bearer ${process.env.CRON_SECRET}` };
 
-      const [rakutenRes, amazonRes] = await Promise.all([
+      const [rakutenRes, amazonRes, colormeRes] = await Promise.all([
         fetch(`${baseUrl}/api/rakuten-sync`, { headers: syncHeaders }).catch(e => ({ ok: false, error: e.message })),
         fetch(`${baseUrl}/api/amazon-sync`, { headers: syncHeaders }).catch(e => ({ ok: false, error: e.message })),
+        fetch(`${baseUrl}/api/colorme-sync`, { headers: syncHeaders }).catch(e => ({ ok: false, error: e.message })),
       ]);
 
       if (rakutenRes.ok && typeof rakutenRes.json === "function") {
@@ -395,6 +396,12 @@ export default async function handler(req, res) {
         results.amazonSync = await amazonRes.json();
       } else {
         results.errors.push({ amazonSync: amazonRes.error || `HTTP ${amazonRes.status}` });
+      }
+
+      if (colormeRes.ok && typeof colormeRes.json === "function") {
+        results.colormeSync = await colormeRes.json();
+      } else {
+        results.errors.push({ colormeSync: colormeRes.error || `HTTP ${colormeRes.status}` });
       }
     } catch (e) { results.errors.push({ syncFatal: e.message }); }
   } catch (e) {
