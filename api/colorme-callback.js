@@ -7,9 +7,6 @@ if (!getApps().length) {
 }
 const db = getFirestore();
 
-const CLIENT_ID = "d184a84b949f7ce84c5ffae58895deb5fa7f4d2394f72060abcb21cce7217c69";
-const CLIENT_SECRET = "c5b7f6fce2694674068a2f4d4c09361e289bd556f391bc28aa2123bf0b55e968";
-
 export default async function handler(req, res) {
   const { code, error } = req.query;
 
@@ -22,14 +19,26 @@ export default async function handler(req, res) {
   }
 
   try {
-    const redirectUri = `https://seikyu-app.vercel.app/api/colorme-callback`;
+    // Firestoreから認証情報を取得
+    const settingsSnap = await db.collection("settings").limit(1).get();
+    if (settingsSnap.empty) {
+      return res.status(400).send(`<html><body><h2>設定が見つかりません</h2><script>setTimeout(()=>window.close(),3000)</script></body></html>`);
+    }
+    const settings = settingsSnap.docs[0].data();
+    const clientId = (settings.colormeClientId || "").trim();
+    const clientSecret = (settings.colormeClientSecret || "").trim();
+    if (!clientId || !clientSecret) {
+      return res.status(400).send(`<html><body><h2>カラーミーのClient ID/Secretが設定されていません</h2><script>setTimeout(()=>window.close(),5000)</script></body></html>`);
+    }
+
+    const redirectUri = `${req.headers["x-forwarded-proto"] || "https"}://${req.headers.host}/api/colorme-callback`;
 
     const tokenRes = await fetch("https://api.shop-pro.jp/oauth/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
-        client_id: CLIENT_ID,
-        client_secret: CLIENT_SECRET,
+        client_id: clientId,
+        client_secret: clientSecret,
         code,
         grant_type: "authorization_code",
         redirect_uri: redirectUri,
@@ -43,8 +52,7 @@ export default async function handler(req, res) {
     }
 
     // Firestoreのsettingsにアクセストークンを保存
-    const settingsSnap = await db.collection("settings").limit(1).get();
-    if (!settingsSnap.empty) {
+    {
       await settingsSnap.docs[0].ref.update({
         colormeAccessToken: tokenData.access_token,
         colormeTokenCreatedAt: FieldValue.serverTimestamp(),
