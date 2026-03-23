@@ -4100,8 +4100,9 @@ function SettingsPage({ company, setCompany, isAdmin, currentUser }) {
           <div>
             <div style={{fontWeight:600,fontSize:14,color:C.navy,marginBottom:8}}>カラーミーショップ</div>
             <div style={s.row}>
-              <div style={s.col}><span style={s.label}>アクセストークン</span><input style={{...s.input,minWidth:220}} type="password" value={form.colormeAccessToken||""} onChange={e=>setF("colormeAccessToken",e.target.value)} placeholder="未設定" /></div>
+              <div style={s.col}><span style={s.label}>アクセストークン</span><input style={{...s.input,minWidth:220}} type="password" value={form.colormeAccessToken||""} onChange={e=>setF("colormeAccessToken",e.target.value)} placeholder="未設定（認証ボタンで自動取得）" /></div>
             </div>
+            <button style={{...s.btn("primary"),background:"#E95295",marginTop:8,fontSize:12}} onClick={()=>{window.open(`https://api.shop-pro.jp/oauth/authorize?client_id=d184a84b949f7ce84c5ffae58895deb5fa7f4d2394f72060abcb21cce7217c69&redirect_uri=${encodeURIComponent("https://seikyu-app.vercel.app/api/colorme-callback")}&response_type=code&scope=read_sales`,"_blank","width=600,height=700")}}>カラーミー認証</button>
             <button style={{...s.btn("light"),marginTop:8,fontSize:12}} onClick={() => { if(confirm("カラーミーの過去1年分を取得します。"))runInitialSync("colorme"); }} disabled={syncing}>{syncMsg && syncMsg.includes("カラーミー") ? syncMsg : "カラーミー 初期同期（過去1年）"}</button>
           </div>
         </div>
