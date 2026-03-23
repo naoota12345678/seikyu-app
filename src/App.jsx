@@ -893,7 +893,129 @@ function QuotationsList({ clients, quotations, products, deliveries, company, cl
   );
 }
 
-// ── Dashboard ────────────────────────────────────────────────────────────────
+// ── Home (やることリスト) ─────────────────────────────────────────────────────
+function HomePage({ clients, deliveries, invoices, balances, pendings, setPage }) {
+  const overdueInv = invoices.filter(i => i.status === "unpaid" && i.dueDate && i.dueDate < today());
+  const pendingApprovals = pendings.filter(p => p.status === "pending");
+  const unsentInv = invoices.filter(i => i.status === "unpaid" && (!i.sentStatus || i.sentStatus === "scheduled"));
+  const unissuedDel = deliveries.filter(d => d.status === "unissued");
+
+  // 次の締日を計算
+  const closingSchedule = (() => {
+    const now = new Date();
+    const y = now.getFullYear(), m = now.getMonth();
+    const closingDays = new Set();
+    clients.forEach(c => {
+      if (c.billingType === "closing" || c.billingType === "monthly") {
+        (c.closingDays && c.closingDays.length ? c.closingDays : [0]).forEach(d => closingDays.add(d));
+      }
+    });
+    const upcoming = [];
+    closingDays.forEach(cd => {
+      const lastDay = new Date(y, m + 1, 0).getDate();
+      const day = cd === 0 ? lastDay : Math.min(cd, lastDay);
+      const dateStr = `${y}-${String(m + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      if (dateStr >= today()) {
+        const targetClients = clients.filter(c => {
+          if (c.billingType !== "closing" && c.billingType !== "monthly") return false;
+          const cDays = c.closingDays && c.closingDays.length ? c.closingDays : [0];
+          return cDays.includes(cd);
+        });
+        const targetDels = unissuedDel.filter(d => targetClients.some(c => c.id === d.clientId));
+        if (targetClients.length > 0) {
+          upcoming.push({ date: dateStr, day: cd === 0 ? "末日" : cd + "日", clientCount: targetClients.length, delCount: targetDels.length });
+        }
+      }
+    });
+    return upcoming.sort((a, b) => a.date.localeCompare(b.date));
+  })();
+
+  const scheduledSend = invoices.filter(i => i.sentStatus === "scheduled" && i.scheduledSendDate && i.scheduledSendDate >= today()).sort((a, b) => (a.scheduledSendDate || "").localeCompare(b.scheduledSendDate || ""));
+
+  const sections = [
+    { label: "承認待ち", count: pendingApprovals.length, color: "#E67E22", icon: "⏳", page: "pending",
+      detail: pendingApprovals.slice(0, 3).map(p => ({ text: `${p.clientName || "—"} ¥${fmt(p.total)}`, sub: p.billingType === "recurring" ? "定期請求" : "締日請求" })) },
+    { label: "未送信の請求書", count: unsentInv.length, color: "#3498DB", icon: "📨", page: "invoices",
+      detail: unsentInv.slice(0, 3).map(i => ({ text: `${i.docNo} ¥${fmt(i.total)}`, sub: clients.find(c => c.id === i.clientId)?.name || "" })) },
+    { label: "期限超過の未入金", count: overdueInv.length, color: C.red, icon: "⚠", page: "balance",
+      detail: overdueInv.slice(0, 3).map(i => ({ text: `${i.docNo} ¥${fmt(i.total)}`, sub: `期限: ${i.dueDate}` })) },
+    { label: "未請求の納品書", count: unissuedDel.length, color: C.gold, icon: "📦", page: "deliveries",
+      detail: unissuedDel.slice(0, 3).map(d => ({ text: `${d.docNo} ¥${fmt(d.total)}`, sub: clients.find(c => c.id === d.clientId)?.name || "" })) },
+  ];
+
+  const activeSections = sections.filter(sec => sec.count > 0);
+
+  return (
+    <div>
+      <div style={s.pageTitle}>ホーム</div>
+      {activeSections.length === 0 ? (
+        <div style={{ ...s.card, textAlign: "center", padding: "40px 20px", color: C.green }}>
+          <div style={{ fontSize: 36, marginBottom: 12 }}>✓</div>
+          <div style={{ fontSize: 16, fontWeight: 600 }}>対応が必要な項目はありません</div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
+          {activeSections.map(sec => (
+            <div key={sec.label} style={{ ...s.card, margin: 0, cursor: "pointer", borderLeft: `4px solid ${sec.color}` }} onClick={() => setPage(sec.page)}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: sec.detail.length > 0 ? 10 : 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontSize: 20 }}>{sec.icon}</span>
+                  <span style={{ fontSize: 15, fontWeight: 600, color: C.navy }}>{sec.label}</span>
+                </div>
+                <span style={{ fontSize: 22, fontWeight: 700, color: sec.color }}>{sec.count}件</span>
+              </div>
+              {sec.detail.length > 0 && (
+                <div style={{ paddingLeft: 30 }}>
+                  {sec.detail.map((d, i) => (
+                    <div key={i} style={{ fontSize: 13, color: C.gray, padding: "2px 0", display: "flex", gap: 8 }}>
+                      <span>{d.text}</span>
+                      {d.sub && <span style={{ color: "#aaa" }}>({d.sub})</span>}
+                    </div>
+                  ))}
+                  {sec.count > 3 && <div style={{ fontSize: 12, color: sec.color, marginTop: 4 }}>他 {sec.count - 3}件 →</div>}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {(closingSchedule.length > 0 || scheduledSend.length > 0) && (
+        <div style={s.card}>
+          <h3 style={{ margin: "0 0 16px", color: C.navy }}>今後の予定</h3>
+          {closingSchedule.length > 0 && (
+            <div style={{ marginBottom: scheduledSend.length > 0 ? 16 : 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: C.navy, marginBottom: 8 }}>締日スケジュール</div>
+              {closingSchedule.map((cs, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 0", borderBottom: i < closingSchedule.length - 1 ? `1px solid ${C.light}` : "none" }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: C.navy, minWidth: 90 }}>{cs.date}</span>
+                  <span style={{ fontSize: 13, color: C.gray }}>（{cs.day}締め）</span>
+                  <span style={{ fontSize: 13, color: C.navy }}>{cs.clientCount}社</span>
+                  {cs.delCount > 0 && <span style={{ fontSize: 12, color: C.gold }}>未請求 {cs.delCount}件</span>}
+                </div>
+              ))}
+            </div>
+          )}
+          {scheduledSend.length > 0 && (
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: C.navy, marginBottom: 8 }}>送信予定</div>
+              {scheduledSend.slice(0, 5).map((inv, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 0", borderBottom: i < Math.min(scheduledSend.length, 5) - 1 ? `1px solid ${C.light}` : "none" }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: C.navy, minWidth: 90 }}>{inv.scheduledSendDate}</span>
+                  <span style={{ fontSize: 13, color: C.gray }}>{inv.docNo}</span>
+                  <span style={{ fontSize: 13, color: C.navy }}>¥{fmt(inv.total)}</span>
+                  <span style={{ fontSize: 12, color: C.gray }}>{clients.find(c => c.id === inv.clientId)?.name || ""}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Dashboard (売上概況) ─────────────────────────────────────────────────────
 function Dashboard({ clients, deliveries, invoices, balances }) {
   const totalBalance = Object.values(balances).reduce((a, b) => a + (b.currentBalance || 0), 0);
   const thisMonth = new Date().toISOString().slice(0, 7);
@@ -905,7 +1027,7 @@ function Dashboard({ clients, deliveries, invoices, balances }) {
   const overdueAlert = invoices.filter(i => i.status === "unpaid" && i.date && i.date <= oneMonthAgo.toISOString().split("T")[0]);
   return (
     <div>
-      <div style={s.pageTitle}>ダッシュボード</div>
+      <div style={s.pageTitle}>売上概況</div>
       {overdueAlert.length > 0 && (
         <div style={{ background: "#f8d7da", border: `1px solid ${C.red}`, borderRadius: 10, padding: "12px 20px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: 22 }}>⚠</span>
@@ -4298,7 +4420,7 @@ function LoginPage({ onLogin }) {
 export default function App() {
   const [user, setUser] = useState(undefined); // undefined=checking, null=not logged in, object=logged in
   const [userRole, setUserRole] = useState(null); // "admin" | "staff"
-  const [page, setPage] = useState("dashboard");
+  const [page, setPage] = useState("home");
   const [openGroups, setOpenGroups] = useState({});
   const [clients, setClients] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
@@ -4311,6 +4433,7 @@ export default function App() {
   const [quotations, setQuotations] = useState([]);
   const [externalSales, setExternalSales] = useState([]);
   const [paymentHistory, setPaymentHistory] = useState([]);
+  const [pendings, setPendings] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -4354,6 +4477,7 @@ export default function App() {
     unsubs.push(onSnapshot(collection(db,"divisions"),snap=>setDivisions(snap.docs.map(d=>({id:d.id,...d.data()})))));
     unsubs.push(onSnapshot(collection(db,"externalSales"),snap=>setExternalSales(snap.docs.map(d=>({id:d.id,...d.data()})))));
     unsubs.push(onSnapshot(query(collection(db,"paymentHistory"),orderBy("createdAt","desc")),snap=>setPaymentHistory(snap.docs.map(d=>({id:d.id,...d.data()})))));
+    unsubs.push(onSnapshot(query(collection(db,"pendingBillings"),orderBy("createdAt","desc")),snap=>setPendings(snap.docs.map(d=>({id:d.id,...d.data()})))));
     unsubs.push(onSnapshot(collection(db,"settings"),snap=>{
       if(!snap.empty) setCompany({id:snap.docs[0].id,...snap.docs[0].data()});
       setLoading(false);
@@ -4369,7 +4493,8 @@ export default function App() {
 
   const toggleGroup = (g) => setOpenGroups(prev => ({ ...prev, [g]: !prev[g] }));
   const nav = [
-    { id: "dashboard", label: "📊 ダッシュボード" },
+    { id: "home", label: "🏠 ホーム" },
+    { id: "dashboard", label: "📊 売上概況" },
     { id: "sales", label: "📈 売上管理" },
     { id: "quotations", label: "📝 見積書一覧" },
     { id: "deliveries", label: "📦 納品書一覧" },
@@ -4421,6 +4546,7 @@ export default function App() {
         </div>
       </div>
       <div style={s.main}>
+        {page==="home"&&<HomePage clients={clients} deliveries={deliveries} invoices={invoices} balances={balances} pendings={pendings} setPage={setPage}/>}
         {page==="dashboard"&&<Dashboard clients={clients} deliveries={deliveries} invoices={invoices} balances={balances}/>}
         {page==="quotations"&&<QuotationsList clients={clients} quotations={quotations} products={products} deliveries={deliveries} company={company} clientPrices={clientPrices} divisions={divisions} isAdmin={isAdmin}/>}
         {page==="deliveries"&&<DeliveriesList clients={clients} deliveries={deliveries} products={products} invoices={invoices} company={company} balances={balances} clientPrices={clientPrices} divisions={divisions} isAdmin={isAdmin}/>}
