@@ -3721,7 +3721,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
         inv.deliveryRef = p.deliveryDocNo || "";
         inv.deliveryRefs = p.deliveryDocNo ? [p.deliveryDocNo] : [];
       }
-      if (p.scheduledSendDate) { inv.scheduledSendDate = p.scheduledSendDate; inv.sentStatus = "scheduled"; }
+      // scheduledSendDateは使用しない（承認後は即送信）
       const invRef = await addDoc(collection(db, "invoices"), inv);
       // 納品書をinvoiced状態に
       const delIds = p.deliveryIds ? (Array.isArray(p.deliveryIds) ? p.deliveryIds : [p.deliveryIds]) : (p.deliveryId ? [p.deliveryId] : []);
@@ -3737,9 +3737,9 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
       });
       await updateDoc(doc(db, "pendingBillings", p.id), { status: "approved", approvedAt: serverTimestamp(), invoiceDocNo: inv.docNo });
 
-      // 承認後メール自動送信（scheduledSendDate未設定 or 今日以前なら即送信）
+      // 承認後メール自動送信
       const email = cl.email;
-      if (email && (!inv.scheduledSendDate || inv.scheduledSendDate <= today())) {
+      if (email && cl.sendMode !== "manual") {
         try {
           const co = company || {};
           let coInfo = co;
@@ -3781,9 +3781,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
           alert(`請求書 ${inv.docNo} を発行しました（メール送信エラー: ${e2.message}）`);
         }
       } else {
-        alert(inv.scheduledSendDate
-          ? `請求書 ${inv.docNo} を発行しました（${inv.scheduledSendDate}に自動送信予定）`
-          : `請求書 ${inv.docNo} を発行しました`);
+        alert(`請求書 ${inv.docNo} を発行しました${!email ? "（メールアドレス未設定）" : cl.sendMode === "manual" ? "（手動送信）" : ""}`);
       }
     } catch (e) { alert("エラー: " + e.message); }
     setSending(null);
