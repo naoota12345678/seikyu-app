@@ -2958,18 +2958,10 @@ function ClientsPage({ clients, divisions, isAdmin }) {
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                   {(form.closingDays || []).map((d, i) => (
                     <div key={i} style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                      {d === 0 ? (
-                        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                          <span style={{ ...s.input, minWidth: 60, textAlign: "center", background: C.pale }}>末日</span>
-                          <button style={{ ...s.btn("light"), padding: "2px 8px", fontSize: 11 }} onClick={() => { const nv = [...(form.closingDays||[])]; nv[i] = 1; setF("closingDays", nv); }}>日付に変更</button>
-                        </div>
-                      ) : (
-                        <div style={{ display: "flex", gap: 2, alignItems: "center" }}>
-                          <input style={{ ...s.input, width: 50, textAlign: "center" }} type="number" min={1} max={28} value={d} onChange={e => { const v = Math.max(1, Math.min(28, Number(e.target.value)||1)); const nv = [...(form.closingDays||[])]; nv[i] = v; setF("closingDays", nv); }} />
-                          <span style={{ fontSize: 12 }}>日</span>
-                          <button style={{ ...s.btn("light"), padding: "2px 8px", fontSize: 11 }} onClick={() => { const nv = [...(form.closingDays||[])]; nv[i] = 0; setF("closingDays", nv); }}>末日に</button>
-                        </div>
-                      )}
+                      <select style={{ ...s.select, width: 80 }} value={d} onChange={e => { const nv = [...(form.closingDays||[])]; nv[i] = Number(e.target.value); setF("closingDays", nv); }}>
+                        {Array.from({ length: 28 }, (_, k) => k + 1).map(n => <option key={n} value={n}>{n}日</option>)}
+                        <option value={0}>末日</option>
+                      </select>
                       <button style={{ ...s.btn("red"), padding: "2px 8px", fontSize: 11 }} onClick={() => { const nv = (form.closingDays||[]).filter((_,j)=>j!==i); setF("closingDays", nv.length ? nv : [0]); }}>✕</button>
                     </div>
                   ))}
