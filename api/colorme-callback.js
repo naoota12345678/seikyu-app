@@ -31,7 +31,8 @@ export default async function handler(req, res) {
       return res.status(400).send(`<html><body><h2>カラーミーのClient ID/Secretが設定されていません</h2><script>setTimeout(()=>window.close(),5000)</script></body></html>`);
     }
 
-    const redirectUri = `${req.headers["x-forwarded-proto"] || "https"}://${req.headers.host}/api/colorme-callback`;
+    const redirectUri = (settings.colormeRedirectUri || "").trim()
+      || `${req.headers["x-forwarded-proto"] || "https"}://${req.headers.host}/api/colorme-callback`;
 
     const tokenRes = await fetch("https://api.shop-pro.jp/oauth/token", {
       method: "POST",

@@ -4102,9 +4102,10 @@ function SettingsPage({ company, setCompany, isAdmin, currentUser }) {
             <div style={s.row}>
               <div style={s.col}><span style={s.label}>Client ID</span><input style={{...s.input,minWidth:220}} value={form.colormeClientId||""} onChange={e=>setF("colormeClientId",e.target.value)} placeholder="未設定" /></div>
               <div style={s.col}><span style={s.label}>Client Secret</span><input style={{...s.input,minWidth:220}} type="password" value={form.colormeClientSecret||""} onChange={e=>setF("colormeClientSecret",e.target.value)} placeholder="未設定" /></div>
+              <div style={s.col}><span style={s.label}>リダイレクトURL</span><input style={{...s.input,minWidth:320}} value={form.colormeRedirectUri||""} onChange={e=>setF("colormeRedirectUri",e.target.value)} placeholder={location.origin+"/api/colorme-callback"} /></div>
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center",marginTop:8}}>
-              <button style={{...s.btn("primary"),background:"#E95295",fontSize:12}} onClick={()=>{if(!form.colormeClientId){alert("Client IDを入力して保存してください");return;}window.open(`https://api.shop-pro.jp/oauth/authorize?client_id=${form.colormeClientId}&redirect_uri=${encodeURIComponent(location.origin+"/api/colorme-callback")}&response_type=code&scope=read_sales`,"_blank","width=600,height=700")}}>カラーミー認証</button>
+              <button style={{...s.btn("primary"),background:"#E95295",fontSize:12}} onClick={()=>{if(!form.colormeClientId){alert("Client IDを入力して保存してください");return;}const rUri=form.colormeRedirectUri||location.origin+"/api/colorme-callback";window.open(`https://api.shop-pro.jp/oauth/authorize?client_id=${form.colormeClientId}&redirect_uri=${encodeURIComponent(rUri)}&response_type=code&scope=read_sales`,"_blank","width=600,height=700")}}>カラーミー認証</button>
               {form.colormeAccessToken && <span style={{fontSize:12,color:C.green}}>認証済み</span>}
             </div>
             <button style={{...s.btn("light"),marginTop:8,fontSize:12}} onClick={() => { if(confirm("カラーミーの過去1年分を取得します。"))runInitialSync("colorme"); }} disabled={syncing}>{syncMsg && syncMsg.includes("カラーミー") ? syncMsg : "カラーミー 初期同期（過去1年）"}</button>
