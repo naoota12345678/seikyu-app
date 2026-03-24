@@ -2864,7 +2864,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
 
 // ── Clients ───────────────────────────────────────────────────────────────────
 function ClientsPage({ clients, divisions, isAdmin }) {
-  const [form, setForm] = useState({ name: "", kana: "", address: "", tel: "", email: "", billingType: "immediate", closingDays: [], sendMode: "manual", isOneTime: false, divisionId: "" });
+  const [form, setForm] = useState({ name: "", kana: "", address: "", tel: "", email: "", billingType: "immediate", closingDays: [], sendMode: "auto", isOneTime: false, divisionId: "" });
   const [editing, setEditing] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -2875,7 +2875,7 @@ function ClientsPage({ clients, divisions, isAdmin }) {
     if (editing) await updateDoc(doc(db, "clients", editing.id), data);
     else { data.createdAt = serverTimestamp(); await addDoc(collection(db, "clients"), data); }
     setShowForm(false); setEditing(null);
-    setForm({ name: "", kana: "", address: "", tel: "", email: "", billingType: "immediate", closingDays: [], sendMode: "manual", isOneTime: false, divisionId: "" });
+    setForm({ name: "", kana: "", address: "", tel: "", email: "", billingType: "immediate", closingDays: [], sendMode: "auto", isOneTime: false, divisionId: "" });
   };
   const edit = (c) => {
     const cd = c.closingDays;
@@ -3011,15 +3011,13 @@ function ClientsPage({ clients, divisions, isAdmin }) {
                 </div>
               </div>
             )}
-            {form.billingType === "closing" && (
-              <div style={s.col}><span style={s.label}>締日処理</span>
-                <select style={s.select} value={form.sendMode||"manual"} onChange={e => setF("sendMode",e.target.value)}>
-                  <option value="auto">自動送信</option>
-                  <option value="confirm">確認後送信</option>
-                  <option value="manual">手動</option>
-                </select>
-              </div>
-            )}
+            <div style={s.col}><span style={s.label}>送信方法</span>
+              <select style={s.select} value={form.sendMode||"manual"} onChange={e => setF("sendMode",e.target.value)}>
+                <option value="auto">自動送信</option>
+                <option value="confirm">確認後送信</option>
+                <option value="manual">手動（紙請求等）</option>
+              </select>
+            </div>
             <div style={s.col}><span style={s.label}>事業部</span>
               <select style={s.select} value={form.divisionId||""} onChange={e => setF("divisionId",e.target.value)}>
                 <option value="">指定なし</option>
