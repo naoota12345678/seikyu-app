@@ -1110,7 +1110,47 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
       currentBalance: (bal.currentBalance || 0) + d.total,
       paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
     });
-    alert("請求書を発行しました");
+    // 即送信（sendModeがmanual以外かつメールあり）
+    if (cl?.email && cl?.sendMode !== "manual") {
+      try {
+        let coInfo = company || {};
+        if (cl.divisionId) {
+          const div = divisions.find(dv => dv.id === cl.divisionId);
+          if (div) coInfo = { ...coInfo, ...Object.fromEntries(Object.entries(div).filter(([,v]) => v)) };
+        }
+        const res = await fetch("/api/send-invoice", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: cl.email,
+            subject: `【請求書】${inv.docNo} ${coInfo.name || ""}`,
+            html: `<div style="font-family:sans-serif;color:#333;">
+              <p>${cl.name || ""} 御中</p>
+              <p>いつもお世話になっております。<br>${coInfo.name || ""}です。</p>
+              <p>請求書（${inv.docNo}）をお送りいたします。</p>
+              <p>金額：&yen;${fmt(d.total)}</p>
+              <p>ご確認のほど、よろしくお願いいたします。</p>
+              <hr style="border:none;border-top:1px solid #ddd;margin:20px 0">
+              <p style="font-size:12px;color:#888">${coInfo.name || ""}<br>${coInfo.address || ""}<br>TEL ${coInfo.tel || ""}</p>
+            </div>`,
+          }),
+        });
+        if (res.ok) {
+          await addDoc(collection(db, "sendHistory"), {
+            docNo: inv.docNo, invoiceId: invRef.id, clientId: d.clientId,
+            clientName: cl.name || "", email: cl.email, method: "auto",
+            memo: "即時発行自動送信", amount: d.total, sentAt: serverTimestamp(), sentBy: "immediate",
+          });
+          await updateDoc(doc(db, "invoices", invRef.id), { sentStatus: "sent", lastSentAt: serverTimestamp() });
+          alert(`請求書を発行し、${cl.name}（${cl.email}）にメール送信しました`);
+        } else {
+          alert("請求書を発行しました（メール送信に失敗しました。手動で送信してください）");
+        }
+      } catch (e2) {
+        alert(`請求書を発行しました（メール送信エラー: ${e2.message}）`);
+      }
+    } else {
+      alert(`請求書を発行しました${!cl?.email ? "（メールアドレス未設定）" : cl?.sendMode === "manual" ? "（手動送信）" : ""}`);
+    }
   };
   return (
     <div>
