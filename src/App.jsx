@@ -3177,7 +3177,7 @@ function ProductsPage({ products, company, isAdmin }) {
         <table style={s.table}>
           <thead><tr><th style={s.th}>商品名</th><th style={s.th}>コード</th><th style={s.th}>JAN</th><th style={s.th}>単位</th><th style={s.th}>標準単価</th><th style={s.th}>税率</th><th style={s.th}>備考</th><th style={s.th}>操作</th></tr></thead>
           <tbody>
-            {products.map(p => (
+            {[...products].sort((a,b)=>(a.code||"").localeCompare(b.code||"","ja",{numeric:true})).map(p => (
               <tr key={p.id}>
                 <td style={s.td}>{p.name}</td><td style={s.td}>{p.code}</td><td style={s.td}>{p.jan||""}</td>
                 <td style={s.td}>{p.unit}</td><td style={s.td}>¥{fmt(p.price)}</td><td style={s.td}>{p.taxRate !== undefined ? `${p.taxRate}%` : "10%"}</td><td style={s.td}>{p.notes}</td>
