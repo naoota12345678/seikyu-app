@@ -143,8 +143,9 @@ async function createInvoiceAndProcess({ clientId, divisionId, items, deliveryRe
     }
   }
 
-  if (sendMode === "auto" && client.email) {
-    const sent = await sendEmail(client.email,
+  const clientEmails = [client.email, client.email2, client.email3, client.email4].filter(Boolean);
+  if (sendMode === "auto" && clientEmails.length) {
+    const sent = await sendEmail(clientEmails,
       `【請求書】${docNo} ${co.name || ""}`,
       `<div style="font-family:sans-serif;color:#333;">
         <p>${client.name || ""} 御中</p>
@@ -159,7 +160,7 @@ async function createInvoiceAndProcess({ clientId, divisionId, items, deliveryRe
     if (sent) {
       await db.collection("sendHistory").add({
         docNo, invoiceId: invRef.id, clientId, clientName: client.name || "",
-        email: client.email, method: "auto", memo: "cron自動送信",
+        email: clientEmails.join(", "), method: "auto", memo: "cron自動送信",
         amount: total, sentAt: FieldValue.serverTimestamp(), sentBy: "auto",
       });
       await invRef.update({ sentStatus: "sent", lastSentAt: FieldValue.serverTimestamp() });
@@ -329,7 +330,8 @@ export default async function handler(req, res) {
       try {
         const clientDoc = await db.collection("clients").doc(inv.clientId).get();
         const client = clientDoc.exists ? clientDoc.data() : {};
-        if (!client.email) {
+        const schEmails = [client.email, client.email2, client.email3, client.email4].filter(Boolean);
+        if (!schEmails.length) {
           results.errors.push({ scheduled: inv.docNo, error: "メールアドレス未設定" });
           continue;
         }
@@ -345,7 +347,7 @@ export default async function handler(req, res) {
           }
         }
 
-        const sent = await sendEmail(client.email,
+        const sent = await sendEmail(schEmails,
           `【請求書】${inv.docNo} ${co2.name || ""}`,
           `<div style="font-family:sans-serif;color:#333;">
             <p>${client.name || ""} 御中</p>
@@ -361,7 +363,7 @@ export default async function handler(req, res) {
           await invDoc.ref.update({ sentStatus: "sent", lastSentAt: FieldValue.serverTimestamp() });
           await db.collection("sendHistory").add({
             docNo: inv.docNo, invoiceId: inv.id, clientId: inv.clientId,
-            clientName: client.name || "", email: client.email,
+            clientName: client.name || "", email: schEmails.join(", "),
             method: "auto", memo: "送信予定日による自動送信",
             amount: inv.total || 0, sentAt: FieldValue.serverTimestamp(), sentBy: "scheduled",
           });

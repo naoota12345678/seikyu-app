@@ -18,6 +18,8 @@ const C = {
 
 const fmt = (n) => Number(n || 0).toLocaleString("ja-JP");
 const today = () => new Date().toISOString().split("T")[0];
+const getEmails = (cl) => [cl?.email, cl?.email2, cl?.email3, cl?.email4].filter(Boolean);
+const getEmailStr = (cl) => getEmails(cl).join(", ");
 const nextMonthEnd = (dateStr) => {
   const d = new Date(dateStr || today());
   return new Date(d.getFullYear(), d.getMonth() + 2, 0).toISOString().split("T")[0];
@@ -1153,7 +1155,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
       paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
     });
     // 即送信（sendModeがmanual以外かつメールあり）
-    if (cl?.email && cl?.sendMode !== "manual") {
+    if (getEmails(cl).length && cl?.sendMode !== "manual") {
       try {
         let coInfo = company || {};
         if (cl.divisionId) {
@@ -1163,7 +1165,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
         const res = await fetch("/api/send-invoice", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            to: cl.email,
+            to: getEmails(cl),
             subject: `【請求書】${inv.docNo} ${coInfo.name || ""}`,
             html: `<div style="font-family:sans-serif;color:#333;">
               <p>${cl.name || ""} 御中</p>
@@ -1179,11 +1181,11 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
         if (res.ok) {
           await addDoc(collection(db, "sendHistory"), {
             docNo: inv.docNo, invoiceId: invRef.id, clientId: d.clientId,
-            clientName: cl.name || "", email: cl.email, method: "auto",
+            clientName: cl.name || "", email: getEmailStr(cl), method: "auto",
             memo: "即時発行自動送信", amount: d.total, sentAt: serverTimestamp(), sentBy: "immediate",
           });
           await updateDoc(doc(db, "invoices", invRef.id), { sentStatus: "sent", lastSentAt: serverTimestamp() });
-          alert(`請求書を発行し、${cl.name}（${cl.email}）にメール送信しました`);
+          alert(`請求書を発行し、${cl.name}（${getEmailStr(cl)}）にメール送信しました`);
         } else {
           alert("請求書を発行しました（メール送信に失敗しました。手動で送信してください）");
         }
@@ -1191,7 +1193,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
         alert(`請求書を発行しました（メール送信エラー: ${e2.message}）`);
       }
     } else {
-      alert(`請求書を発行しました${!cl?.email ? "（メールアドレス未設定）" : cl?.sendMode === "manual" ? "（手動送信）" : ""}`);
+      alert(`請求書を発行しました${!getEmails(cl).length ? "（メールアドレス未設定）" : cl?.sendMode === "manual" ? "（手動送信）" : ""}`);
     }
   };
   return (
@@ -1252,7 +1254,7 @@ function SendRecordModal({ invoice, clients, company, divisions, balances, onClo
   const cl = clients.find(c => c.id === invoice?.clientId) || {};
   const [method, setMethod] = useState("mail");
   const [memo, setMemo] = useState("");
-  const [email, setEmail] = useState(cl.email || "");
+  const [email, setEmail] = useState(getEmailStr(cl) || "");
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
 
@@ -1410,7 +1412,7 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
 
   const needApproval = company?.reRequestApproval !== false;
   const resendEmail = async () => {
-    if (!cl.email) return alert("取引先のメールアドレスが設定されていません");
+    if (!getEmails(cl).length) return alert("取引先のメールアドレスが設定されていません");
     setSending(true);
     setResult(null);
     try {
@@ -1436,7 +1438,7 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
       if (needApproval) {
         await addDoc(collection(db, "pendingBillings"), {
           type: "re-request-email",
-          clientId: invoice.clientId, clientName: cl.name || "", email: cl.email,
+          clientId: invoice.clientId, clientName: cl.name || "", email: getEmailStr(cl),
           invoiceDocNo: invoice.docNo, invoiceIds: [invoice.id],
           total: invoice.total || 0, pdfUrl,
           message: `${cl.name} 御中\n\nいつもお世話になっております。\n${co.name || ""}です。\n\n${message}\n\n請求番号：${invoice.docNo}\n金額：¥${Number(invoice.total||0).toLocaleString()}\n支払期限：${invoice.dueDate || "—"}`,
@@ -1448,7 +1450,7 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            to: cl.email,
+            to: getEmails(cl),
             subject: `【再送】請求書 ${invoice.docNo} ${co.name || ""}`,
             html: `<div style="font-family:sans-serif;color:#333;">
               <p>${cl.name} 御中</p>
@@ -1470,7 +1472,7 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
         await addDoc(collection(db, "sendHistory"), {
           docNo: invoice.docNo, invoiceId: invoice.id,
           clientId: invoice.clientId, clientName: cl.name || "",
-          email: cl.email, method: "auto", memo: "再送：" + message.slice(0, 50),
+          email: getEmailStr(cl), method: "auto", memo: "再送：" + message.slice(0, 50),
           amount: invoice.total || 0,
           sentAt: serverTimestamp(), sentBy: "resend",
         });
@@ -1503,7 +1505,7 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
         </div>
         <div style={{ background: C.pale, padding: 14, borderRadius: 8, marginBottom: 16, fontSize: 13 }}>
           <strong>{cl.name}</strong> 宛　{invoice.docNo}　¥{fmt(invoice.total)}
-          {cl.email && <div style={{ fontSize: 12, color: C.gray, marginTop: 4 }}>送信先：{cl.email}</div>}
+          {getEmails(cl).length > 0 && <div style={{ fontSize: 12, color: C.gray, marginTop: 4 }}>送信先：{getEmailStr(cl)}</div>}
         </div>
 
         {result === "success" ? (
@@ -1530,7 +1532,7 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
             <div style={{ ...s.row, justifyContent: "flex-end", gap: 8 }}>
               <button style={s.btn("light")} onClick={onClose}>キャンセル</button>
               <button style={{ ...s.btn("light"), border: `1px solid ${C.navy}` }} onClick={handlePrint}>🖨 印刷して郵送</button>
-              <button style={s.btn("primary")} onClick={resendEmail} disabled={sending || !cl.email}>
+              <button style={s.btn("primary")} onClick={resendEmail} disabled={sending || !getEmails(cl).length}>
                 {sending ? "処理中..." : needApproval ? "📧 承認待ちに追加" : "📧 メール再送"}
               </button>
             </div>
@@ -1653,13 +1655,13 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
         const msg = reRequestMsg || defaultMsg;
         const needApproval = company?.reRequestApproval !== false;
         const sendEmailReRequest = async () => {
-          if (!cl.email) return alert("取引先のメールアドレスが設定されていません");
+          if (!getEmails(cl).length) return alert("取引先のメールアドレスが設定されていません");
           setEmailSending(true);
           try {
             if (needApproval) {
               await addDoc(collection(db, "pendingBillings"), {
                 type: "re-request-email",
-                clientId: inv.clientId, clientName: cl.name || "", email: cl.email,
+                clientId: inv.clientId, clientName: cl.name || "", email: getEmailStr(cl),
                 invoiceDocNo: inv.docNo, invoiceIds: [inv.id],
                 total: inv.total || 0, message: msg,
                 status: "pending", createdAt: serverTimestamp(),
@@ -1667,17 +1669,17 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
               alert("承認待ちに追加しました。承認待ちページで確認・送信してください。");
               setReRequestTarget(null); setReRequestMsg("");
             } else {
-              if (!confirm(`${cl.name}（${cl.email}）にお支払いのお願いメールを送信します。`)) { setEmailSending(false); return; }
+              if (!confirm(`${cl.name}（${getEmailStr(cl)}）にお支払いのお願いメールを送信します。`)) { setEmailSending(false); return; }
               const htmlBody = msg.replace(/\n/g, "<br/>");
               const res = await fetch("/api/send-invoice", {
                 method: "POST", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ to: cl.email, subject: `【お支払いのお願い】${inv.docNo}`, html: htmlBody }),
+                body: JSON.stringify({ to: getEmails(cl), subject: `【お支払いのお願い】${inv.docNo}`, html: htmlBody }),
               });
               const data = await res.json();
               if (data.success) {
                 await addDoc(collection(db, "sendHistory"), {
                   docNo: inv.docNo, invoiceId: inv.id, clientId: inv.clientId,
-                  clientName: cl.name || "", email: cl.email, method: "mail",
+                  clientName: cl.name || "", email: getEmailStr(cl), method: "mail",
                   memo: `再請求メール ¥${fmt(inv.total || 0)}`,
                   amount: inv.total || 0, sentAt: serverTimestamp(), sentBy: "re-request",
                 });
@@ -1694,7 +1696,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
               <h3 style={{ margin: "0 0 16px", color: C.navy }}>メールで再請求</h3>
               <div style={{ background: "#f8f9fa", borderRadius: 8, padding: 16, marginBottom: 16 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>{cl.name}</div>
-                <div style={{ fontSize: 13, color: C.gray, marginBottom: 4 }}>送信先: {cl.email || <span style={{ color: C.red }}>未設定</span>}</div>
+                <div style={{ fontSize: 13, color: C.gray, marginBottom: 4 }}>送信先: {getEmailStr(cl) || <span style={{ color: C.red }}>未設定</span>}</div>
                 <div style={{ fontSize: 13, color: C.gray }}>対象: {inv.docNo} / ¥{fmt(inv.total || 0)}</div>
               </div>
               <div style={{ marginBottom: 16 }}>
@@ -1703,7 +1705,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
                 <button style={s.btn("light")} onClick={() => { setReRequestTarget(null); setReRequestMsg(""); }} disabled={emailSending}>キャンセル</button>
-                <button style={s.btn("primary")} onClick={sendEmailReRequest} disabled={emailSending || !cl.email}>
+                <button style={s.btn("primary")} onClick={sendEmailReRequest} disabled={emailSending || !getEmails(cl).length}>
                   {emailSending ? "処理中..." : needApproval ? "承認待ちに追加" : "再請求メールを送信"}
                 </button>
               </div>
@@ -1716,14 +1718,14 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
         const cl = clients.find(c => c.id === inv.clientId) || {};
         const needApproval = company?.reRequestApproval !== false;
         const sendStripeInvoice = async () => {
-          if (!cl.email) return alert("取引先のメールアドレスが設定されていません");
+          if (!getEmails(cl).length) return alert("取引先のメールアドレスが設定されていません");
           setStripeSending(true);
           try {
             const items = [{ name: `${inv.docNo} 未入金分`, qty: 1, unitAmount: inv.total || 0 }];
             if (needApproval) {
               await addDoc(collection(db, "pendingBillings"), {
                 type: "re-request-stripe",
-                clientId: inv.clientId, clientName: cl.name || "", email: cl.email,
+                clientId: inv.clientId, clientName: cl.name || "", email: getEmailStr(cl),
                 invoiceDocNo: inv.docNo, invoiceIds: [inv.id],
                 total: inv.total || 0, invoiceItems: items,
                 status: "pending", createdAt: serverTimestamp(),
@@ -1731,12 +1733,12 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
               alert("承認待ちに追加しました。承認待ちページで確認・送信してください。");
               setStripeTarget(null);
             } else {
-              if (!confirm(`${cl.name} に ¥${fmt(inv.total || 0)} のStripe請求書を送信します。\n\n対象: ${inv.docNo}\n送信先: ${cl.email}\n\n※ Stripe手数料（3.6%）が発生します。`)) { setStripeSending(false); return; }
+              if (!confirm(`${cl.name} に ¥${fmt(inv.total || 0)} のStripe請求書を送信します。\n\n対象: ${inv.docNo}\n送信先: ${getEmailStr(cl)}\n\n※ Stripe手数料（3.6%）が発生します。`)) { setStripeSending(false); return; }
               const res = await fetch("/api/stripe-invoice", {
                 method: "POST", headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   stripeSecretKey: company.stripeSecretKey,
-                  clientName: cl.name, email: cl.email,
+                  clientName: cl.name, email: getEmailStr(cl),
                   amount: inv.total || 0, currency: "jpy",
                   description: `未入金再請求（${inv.docNo}）`,
                   invoiceItems: items, docNos: inv.docNo,
@@ -1746,7 +1748,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
               if (data.success) {
                 await addDoc(collection(db, "sendHistory"), {
                   docNo: inv.docNo, invoiceId: inv.id, clientId: inv.clientId,
-                  clientName: cl.name || "", email: cl.email, method: "stripe",
+                  clientName: cl.name || "", email: getEmailStr(cl), method: "stripe",
                   memo: `Stripe再請求 ¥${fmt(inv.total || 0)} / ${data.invoiceUrl}`,
                   amount: inv.total || 0, sentAt: serverTimestamp(), sentBy: "stripe",
                 });
@@ -1763,7 +1765,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
               <h3 style={{ margin: "0 0 16px", color: "#635BFF" }}>Stripe再請求</h3>
               <div style={{ background: "#f8f9fa", borderRadius: 8, padding: 16, marginBottom: 16 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>{cl.name}</div>
-                <div style={{ fontSize: 13, color: C.gray, marginBottom: 4 }}>送信先: {cl.email || <span style={{ color: C.red }}>未設定</span>}</div>
+                <div style={{ fontSize: 13, color: C.gray, marginBottom: 4 }}>送信先: {getEmailStr(cl) || <span style={{ color: C.red }}>未設定</span>}</div>
                 <div style={{ fontSize: 13, color: C.gray }}>対象: {inv.docNo} / ¥{fmt(inv.total || 0)}</div>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
@@ -1773,7 +1775,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
                   <button style={s.btn("light")} onClick={() => setStripeTarget(null)} disabled={stripeSending}>キャンセル</button>
-                  <button style={{ ...s.btn("primary"), background: "#635BFF" }} onClick={sendStripeInvoice} disabled={stripeSending || !cl.email}>
+                  <button style={{ ...s.btn("primary"), background: "#635BFF" }} onClick={sendStripeInvoice} disabled={stripeSending || !getEmails(cl).length}>
                     {stripeSending ? "処理中..." : needApproval ? "承認待ちに追加" : "Stripe請求書を送信"}
                   </button>
                 </div>
@@ -2751,13 +2753,13 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
         const msg = reRequestMsg || defaultMsg;
         const needApproval = company?.reRequestApproval !== false;
         const sendEmailReRequest = async () => {
-          if (!cl.email) return alert("取引先のメールアドレスが設定されていません");
+          if (!getEmails(cl).length) return alert("取引先のメールアドレスが設定されていません");
           setEmailSending(true);
           try {
             if (needApproval) {
               await addDoc(collection(db, "pendingBillings"), {
                 type: "re-request-email",
-                clientId: cl.id, clientName: cl.name, email: cl.email,
+                clientId: cl.id, clientName: cl.name, email: getEmailStr(cl),
                 invoiceDocNo: docNos, invoiceIds: clOverdue.map(i => i.id),
                 total: overdueTotal, message: msg,
                 status: "pending", createdAt: serverTimestamp(),
@@ -2765,13 +2767,13 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
               alert("承認待ちに追加しました。承認待ちページで確認・送信してください。");
               { setReRequestTarget(null); setReRequestMsg(""); };
             } else {
-              if (!confirm(`${cl.name}（${cl.email}）にお支払いのお願いメールを送信します。`)) { setEmailSending(false); return; }
+              if (!confirm(`${cl.name}（${getEmailStr(cl)}）にお支払いのお願いメールを送信します。`)) { setEmailSending(false); return; }
               const htmlBody = msg.replace(/\n/g, "<br/>");
               const res = await fetch("/api/send-invoice", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                  to: cl.email,
+                  to: getEmails(cl),
                   subject: `【お支払いのお願い】${docNos}`,
                   html: htmlBody,
                 }),
@@ -2780,7 +2782,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
               if (data.success) {
                 await addDoc(collection(db, "sendHistory"), {
                   docNo: docNos, invoiceId: clOverdue.map(i => i.id).join(","), clientId: cl.id,
-                  clientName: cl.name, email: cl.email, method: "mail",
+                  clientName: cl.name, email: getEmailStr(cl), method: "mail",
                   memo: `再請求メール ¥${fmt(overdueTotal)}`,
                   amount: overdueTotal, sentAt: serverTimestamp(), sentBy: "re-request",
                 });
@@ -2799,7 +2801,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
               <h3 style={{ margin: "0 0 16px", color: C.navy }}>メールで再請求</h3>
               <div style={{ background: "#f8f9fa", borderRadius: 8, padding: 16, marginBottom: 16 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>{cl.name}</div>
-                <div style={{ fontSize: 13, color: C.gray, marginBottom: 4 }}>送信先: {cl.email || <span style={{ color: C.red }}>未設定</span>}</div>
+                <div style={{ fontSize: 13, color: C.gray, marginBottom: 4 }}>送信先: {getEmailStr(cl) || <span style={{ color: C.red }}>未設定</span>}</div>
                 <div style={{ fontSize: 13, color: C.gray }}>未入金: {clOverdue.length}件 / ¥{fmt(overdueTotal)}</div>
               </div>
               <table style={{ ...s.table, marginBottom: 16 }}>
@@ -2820,7 +2822,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
                 <button style={s.btn("light")} onClick={() => { setReRequestTarget(null); setReRequestMsg(""); }} disabled={emailSending}>キャンセル</button>
-                <button style={s.btn("primary")} onClick={sendEmailReRequest} disabled={emailSending || !cl.email}>
+                <button style={s.btn("primary")} onClick={sendEmailReRequest} disabled={emailSending || !getEmails(cl).length}>
                   {emailSending ? "処理中..." : needApproval ? "承認待ちに追加" : "再請求メールを送信"}
                 </button>
               </div>
@@ -2835,14 +2837,14 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
         const docNos = clOverdue.map(i => i.docNo).join(", ");
         const needApproval = company?.reRequestApproval !== false;
         const sendStripeInvoice = async () => {
-          if (!cl.email) return alert("取引先のメールアドレスが設定されていません");
+          if (!getEmails(cl).length) return alert("取引先のメールアドレスが設定されていません");
           setStripeSending(true);
           try {
             if (needApproval) {
               const items = clOverdue.map(inv => ({ name: `${inv.docNo} 未入金分`, qty: 1, unitAmount: inv.total || 0 }));
               await addDoc(collection(db, "pendingBillings"), {
                 type: "re-request-stripe",
-                clientId: cl.id, clientName: cl.name, email: cl.email,
+                clientId: cl.id, clientName: cl.name, email: getEmailStr(cl),
                 invoiceDocNo: docNos, invoiceIds: clOverdue.map(i => i.id),
                 total: overdueTotal, invoiceItems: items,
                 status: "pending", createdAt: serverTimestamp(),
@@ -2850,14 +2852,14 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
               alert("承認待ちに追加しました。承認待ちページで確認・送信してください。");
               setStripeTarget(null);
             } else {
-              if (!confirm(`${cl.name} に ¥${fmt(overdueTotal)} のStripe請求書を送信します。\n\n対象: ${docNos}\n送信先: ${cl.email}\n\n※ Stripe手数料（3.6%）が発生します。`)) { setStripeSending(false); return; }
+              if (!confirm(`${cl.name} に ¥${fmt(overdueTotal)} のStripe請求書を送信します。\n\n対象: ${docNos}\n送信先: ${getEmailStr(cl)}\n\n※ Stripe手数料（3.6%）が発生します。`)) { setStripeSending(false); return; }
               const items = clOverdue.map(inv => ({ name: `${inv.docNo} 未入金分`, qty: 1, unitAmount: inv.total || 0 }));
               const res = await fetch("/api/stripe-invoice", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   stripeSecretKey: company.stripeSecretKey,
-                  clientName: cl.name, email: cl.email,
+                  clientName: cl.name, email: getEmailStr(cl),
                   amount: overdueTotal, currency: "jpy",
                   description: `未入金再請求（${docNos}）`,
                   invoiceItems: items, docNos,
@@ -2867,7 +2869,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
               if (data.success) {
                 await addDoc(collection(db, "sendHistory"), {
                   docNo: docNos, invoiceId: clOverdue.map(i => i.id).join(","), clientId: cl.id,
-                  clientName: cl.name, email: cl.email, method: "stripe",
+                  clientName: cl.name, email: getEmailStr(cl), method: "stripe",
                   memo: `Stripe再請求 ¥${fmt(overdueTotal)} / ${data.invoiceUrl}`,
                   amount: overdueTotal, sentAt: serverTimestamp(), sentBy: "stripe",
                 });
@@ -2886,7 +2888,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
               <h3 style={{ margin: "0 0 16px", color: "#635BFF" }}>Stripe再請求</h3>
               <div style={{ background: "#f8f9fa", borderRadius: 8, padding: 16, marginBottom: 16 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>{cl.name}</div>
-                <div style={{ fontSize: 13, color: C.gray, marginBottom: 4 }}>送信先: {cl.email || <span style={{ color: C.red }}>未設定</span>}</div>
+                <div style={{ fontSize: 13, color: C.gray, marginBottom: 4 }}>送信先: {getEmailStr(cl) || <span style={{ color: C.red }}>未設定</span>}</div>
                 <div style={{ fontSize: 13, color: C.gray }}>未入金: {clOverdue.length}件</div>
               </div>
               <table style={{ ...s.table, marginBottom: 16 }}>
@@ -2908,7 +2910,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
                   <button style={s.btn("light")} onClick={() => setStripeTarget(null)} disabled={stripeSending}>キャンセル</button>
-                  <button style={{ ...s.btn("primary"), background: "#635BFF" }} onClick={sendStripeInvoice} disabled={stripeSending || !cl.email}>
+                  <button style={{ ...s.btn("primary"), background: "#635BFF" }} onClick={sendStripeInvoice} disabled={stripeSending || !getEmails(cl).length}>
                     {stripeSending ? "処理中..." : needApproval ? "承認待ちに追加" : "Stripe請求書を送信"}
                   </button>
                 </div>
@@ -2924,7 +2926,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
 
 // ── Clients ───────────────────────────────────────────────────────────────────
 function ClientsPage({ clients, divisions, isAdmin }) {
-  const [form, setForm] = useState({ name: "", kana: "", address: "", tel: "", email: "", billingType: "immediate", closingDays: [], sendMode: "auto", isOneTime: false, divisionId: "" });
+  const [form, setForm] = useState({ name: "", kana: "", address: "", tel: "", email: "", email2: "", email3: "", email4: "", billingType: "immediate", closingDays: [], sendMode: "auto", isOneTime: false, divisionId: "" });
   const [editing, setEditing] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -2936,7 +2938,7 @@ function ClientsPage({ clients, divisions, isAdmin }) {
     if (editing) await updateDoc(doc(db, "clients", editing.id), data);
     else { data.createdAt = serverTimestamp(); await addDoc(collection(db, "clients"), data); }
     setShowForm(false); setEditing(null);
-    setForm({ name: "", kana: "", address: "", tel: "", email: "", billingType: "immediate", closingDays: [], sendMode: "auto", isOneTime: false, divisionId: "" });
+    setForm({ name: "", kana: "", address: "", tel: "", email: "", email2: "", email3: "", email4: "", billingType: "immediate", closingDays: [], sendMode: "auto", isOneTime: false, divisionId: "" });
   };
   const edit = (c) => {
     const cd = c.closingDays;
@@ -2965,7 +2967,10 @@ function ClientsPage({ clients, divisions, isAdmin }) {
       const kanaIdx = header.findIndex(h => h.includes("フリガナ") || h.includes("カナ") || h.toLowerCase() === "kana");
       const addrIdx = header.findIndex(h => h.includes("住所") || h.toLowerCase() === "address");
       const telIdx = header.findIndex(h => h.includes("電話") || h.includes("TEL") || h.toLowerCase() === "tel");
-      const emailIdx = header.findIndex(h => h.includes("メール") || h.includes("mail") || h.toLowerCase() === "email");
+      const emailIdx = header.findIndex(h => h === "メール" || h === "メール1" || h.toLowerCase() === "email");
+      const email2Idx = header.findIndex(h => h === "メール2" || h.toLowerCase() === "email2");
+      const email3Idx = header.findIndex(h => h === "メール3" || h.toLowerCase() === "email3");
+      const email4Idx = header.findIndex(h => h === "メール4" || h.toLowerCase() === "email4");
       const typeIdx = header.findIndex(h => h.includes("請求タイプ") || h.includes("billingType"));
       const closingIdx = header.findIndex(h => h.includes("締日") || h.includes("closingDays"));
       const oneTimeIdx = header.findIndex(h => h.includes("単発") || h.includes("isOneTime"));
@@ -2995,6 +3000,9 @@ function ClientsPage({ clients, divisions, isAdmin }) {
           address: addrIdx >= 0 ? (cols[addrIdx] || "") : "",
           tel: telIdx >= 0 ? (cols[telIdx] || "") : "",
           email: emailIdx >= 0 ? (cols[emailIdx] || "") : "",
+          email2: email2Idx >= 0 ? (cols[email2Idx] || "") : "",
+          email3: email3Idx >= 0 ? (cols[email3Idx] || "") : "",
+          email4: email4Idx >= 0 ? (cols[email4Idx] || "") : "",
           billingType, closingDays,
           isOneTime,
           updatedAt: serverTimestamp(),
@@ -3018,9 +3026,9 @@ function ClientsPage({ clients, divisions, isAdmin }) {
     e.target.value = "";
   };
   const downloadCSV = () => {
-    const headers = ["会社名","フリガナ","住所","電話","メール","請求タイプ","締日","単発"];
+    const headers = ["会社名","フリガナ","住所","電話","メール1","メール2","メール3","メール4","請求タイプ","締日","単発"];
     const rows = clients.map(c => [
-      c.name || "", c.kana || "", c.address || "", c.tel || "", c.email || "",
+      c.name || "", c.kana || "", c.address || "", c.tel || "", c.email || "", c.email2 || "", c.email3 || "", c.email4 || "",
       (c.billingType === "closing" || c.billingType === "monthly") ? "締日" : "即時",
       (c.closingDays || (c.billingType === "monthly" ? [0] : [])).map(d => d === 0 ? "末日" : `${d}`).join("・"),
       c.isOneTime ? "○" : ""
@@ -3043,7 +3051,7 @@ function ClientsPage({ clients, divisions, isAdmin }) {
             {importing ? "インポート中..." : "CSV インポート"}
             <input type="file" accept=".csv" style={{display:"none"}} onChange={handleCSV} disabled={importing} />
           </label>
-          <button style={s.btn("primary")} onClick={() => { setEditing(null); setForm({ name:"",kana:"",address:"",tel:"",email:"",billingType:"immediate",closingDays:[],sendMode:"manual",isOneTime:false,divisionId:"" }); setShowForm(true); }}>＋ 追加</button>
+          <button style={s.btn("primary")} onClick={() => { setEditing(null); setForm({ name:"",kana:"",address:"",tel:"",email:"",email2:"",email3:"",email4:"",billingType:"immediate",closingDays:[],sendMode:"manual",isOneTime:false,divisionId:"" }); setShowForm(true); }}>＋ 追加</button>
         </div>
       </div>
       {showForm && (
@@ -3053,7 +3061,10 @@ function ClientsPage({ clients, divisions, isAdmin }) {
             <div style={s.col}><span style={s.label}>会社名 *</span><input style={s.input} value={form.name} onChange={e => setF("name",e.target.value)} /></div>
             <div style={s.col}><span style={s.label}>フリガナ</span><input style={s.input} value={form.kana} onChange={e => setF("kana",e.target.value)} /></div>
             <div style={s.col}><span style={s.label}>電話番号</span><input style={s.input} value={form.tel} onChange={e => setF("tel",e.target.value)} /></div>
-            <div style={s.col}><span style={s.label}>メール</span><input style={s.input} value={form.email} onChange={e => setF("email",e.target.value)} /></div>
+            <div style={s.col}><span style={s.label}>メール1</span><input style={s.input} value={form.email} onChange={e => setF("email",e.target.value)} /></div>
+            <div style={s.col}><span style={s.label}>メール2</span><input style={s.input} value={form.email2||""} onChange={e => setF("email2",e.target.value)} /></div>
+            <div style={s.col}><span style={s.label}>メール3</span><input style={s.input} value={form.email3||""} onChange={e => setF("email3",e.target.value)} /></div>
+            <div style={s.col}><span style={s.label}>メール4</span><input style={s.input} value={form.email4||""} onChange={e => setF("email4",e.target.value)} /></div>
           </div>
           <div style={{ ...s.row, marginBottom: 12 }}>
             <div style={s.col}><span style={s.label}>住所</span><input style={{ ...s.input, minWidth: 300 }} value={form.address} onChange={e => setF("address",e.target.value)} /></div>
@@ -3923,7 +3934,8 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
       await updateDoc(doc(db, "pendingBillings", p.id), { status: "approved", approvedAt: serverTimestamp(), invoiceDocNo: inv.docNo });
 
       // 承認後メール自動送信
-      const email = cl.email;
+      const emails = getEmails(cl);
+      const email = emails[0];
       if (email && cl.sendMode !== "manual") {
         try {
           const co = company || {};
@@ -3936,7 +3948,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              to: email,
+              to: emails,
               subject: `【請求書】${inv.docNo} ${coInfo.name || ""}`,
               html: `<div style="font-family:sans-serif;color:#333;">
                 <p>${cl.name || ""} 御中</p>
@@ -3975,10 +3987,11 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
   const approve = async (p, sendMethod) => {
     if (p.type === "invoice") return approveInvoice(p);
     const cl = clients.find(c => c.id === p.clientId) || {};
-    const email = p.email || cl.email;
+    const emails = p.email ? [p.email] : getEmails(cl);
+    const email = emails[0];
     if (!email) return alert("取引先のメールアドレスが設定されていません");
     const methodLabel = sendMethod === "stripe" ? "Stripe請求書" : "メール";
-    if (!confirm(`${cl.name || p.clientName}（${email}）に${methodLabel}で送信します。よろしいですか？${sendMethod === "stripe" ? "\n\n※ Stripe手数料（3.6%）が発生します。" : ""}`)) return;
+    if (!confirm(`${cl.name || p.clientName}（${emails.join(", ")}）に${methodLabel}で送信します。よろしいですか？${sendMethod === "stripe" ? "\n\n※ Stripe手数料（3.6%）が発生します。" : ""}`)) return;
     setSending(p.id);
     try {
       if (sendMethod === "stripe") {
@@ -4014,7 +4027,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
           const htmlBody = msgHtml + pdfLink;
           await fetch("/api/send-invoice", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ to: email, subject: `【お支払いのお願い】${p.invoiceDocNo}`, html: htmlBody }),
+            body: JSON.stringify({ to: emails, subject: `【お支払いのお願い】${p.invoiceDocNo}`, html: htmlBody }),
           });
           await addDoc(collection(db, "sendHistory"), {
             docNo: p.invoiceDocNo, invoiceId: (p.invoiceIds || [p.invoiceId]).join(","),
@@ -4030,7 +4043,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
           await fetch("/api/send-invoice", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              to: email,
+              to: emails,
               subject: `【請求書】${p.invoiceDocNo} ${co.name || ""}`,
               html: `<div style="font-family:sans-serif;color:#333;">
                 <p>${cl.name} 御中</p>
@@ -4084,7 +4097,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
                 return (
                   <tr key={p.id}>
                     <td style={s.td}>{p.invoiceDocNo || (p.type === "invoice" ? <span style={{ color: C.gray }}>（承認後発行）</span> : "—")}</td>
-                    <td style={s.td}>{cl?.name || "—"}{cl?.email ? "" : <span style={{ fontSize: 11, color: C.red, marginLeft: 6 }}>※メール未設定</span>}</td>
+                    <td style={s.td}>{cl?.name || "—"}{getEmails(cl).length ? "" : <span style={{ fontSize: 11, color: C.red, marginLeft: 6 }}>※メール未設定</span>}</td>
                     <td style={s.td}>¥{fmt(p.total)}</td>
                     <td style={s.td}><span style={s.badge(p.type==="invoice"?"navy":p.type==="recurring"?"blue":p.type==="re-request-email"?"red":p.type==="re-request-stripe"?"red":"gold")}>{p.type==="invoice"?"請求書発行":p.type==="recurring"?"定期":p.type==="re-request-email"?"✉再請求":p.type==="re-request-stripe"?"💳Stripe":"締日"}</span></td>
                     <td style={s.td}>{p.createdAt?.toDate?.()?.toLocaleDateString?.() || "—"}</td>
@@ -4152,7 +4165,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
                   <div>
                     <div style={{ fontSize: 16, fontWeight: 700 }}>{cl.name || p.clientName}</div>
-                    <div style={{ fontSize: 12, color: C.gray, marginTop: 4 }}>{cl.email || p.email || "メール未設定"}</div>
+                    <div style={{ fontSize: 12, color: C.gray, marginTop: 4 }}>{getEmailStr(cl) || p.email || "メール未設定"}</div>
                   </div>
                   <div style={{ textAlign: "right" }}>
                     <span style={s.badge(p.type==="invoice"?"navy":p.type==="re-request-email"?"red":"gold")}>{p.type==="invoice"?"請求書発行":p.type==="re-request-email"?"✉再請求":p.type==="re-request-stripe"?"💳Stripe":"締日/定期"}</span>
