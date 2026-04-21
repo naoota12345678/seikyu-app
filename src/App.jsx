@@ -669,7 +669,7 @@ function ItemRow({ item, idx, onChange, onRemove, onPickProduct }) {
 }
 
 // ── Delivery Form ─────────────────────────────────────────────────────────────
-function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, company, onSave, onClose, editing }) {
+function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, company, invoices, balances, onSave, onClose, editing }) {
   const defRate = company?.defaultTaxRate !== undefined ? company.defaultTaxRate : 10;
   const [form, setForm] = useState(editing || { clientId: "", divisionId: "", date: today(), notes: "", items: [{ name: "", qty: 1, unit: "", price: 0, taxRate: defRate }] });
   const [pickerIdx, setPickerIdx] = useState(null);
@@ -682,9 +682,73 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
   const save = async () => {
     if (!form.clientId) return alert("取引先を選択してください");
     if (!form.items.some(i => i.name)) return alert("品目を入力してください");
-    const data = { ...form, docNo: editing?.docNo || genDocNo("NO", deliveries), status: editing?.status || "unissued", subtotal: sub, tax, total: grandTotal, updatedAt: serverTimestamp() };
-    if (editing) await updateDoc(doc(db, "deliveries", editing.id), data);
-    else { data.createdAt = serverTimestamp(); await addDoc(collection(db, "deliveries"), data); }
+    const cl = clients.find(c => c.id === form.clientId);
+    const isImmediate = cl && cl.billingType !== "closing" && cl.billingType !== "monthly";
+    const autoInv = isImmediate && !editing && company?.immediateAutoInvoice;
+    const data = { ...form, docNo: editing?.docNo || genDocNo("NO", deliveries), status: editing?.status || (autoInv ? "invoiced" : "unissued"), subtotal: sub, tax, total: grandTotal, updatedAt: serverTimestamp() };
+    if (editing) {
+      await updateDoc(doc(db, "deliveries", editing.id), data);
+    } else {
+      data.createdAt = serverTimestamp();
+      const delRef = await addDoc(collection(db, "deliveries"), data);
+      // 即時請求 + 自動発行ONなら請求書を自動作成
+      if (autoInv) {
+        const inv = {
+          docNo: genDocNo("INV", invoices), clientId: form.clientId, date: today(),
+          dueDate: nextMonthEnd(form.date), billingType: "immediate",
+          items: form.items, subtotal: sub, tax, total: grandTotal,
+          deliveryRef: data.docNo, deliveryRefs: [data.docNo],
+          status: "unpaid", createdAt: serverTimestamp(),
+        };
+        const invRef = await addDoc(collection(db, "invoices"), inv);
+        await updateDoc(doc(db, "deliveries", delRef.id), { invoiceId: invRef.id });
+        // 残高更新
+        const bal = balances?.[form.clientId] || {};
+        await setDoc(doc(db, "clientBalances", form.clientId), {
+          clientId: form.clientId, prevBalance: bal.currentBalance || 0,
+          currentBalance: (bal.currentBalance || 0) + grandTotal,
+          paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
+        });
+        // メール送信（sendMode=autoの場合）
+        const emails = getEmails(cl);
+        if (emails.length && cl.sendMode === "auto") {
+          let coInfo = company || {};
+          if (form.divisionId) {
+            const div = divisions.find(d => d.id === form.divisionId);
+            if (div) coInfo = { ...coInfo, ...Object.fromEntries(Object.entries(div).filter(([,v]) => v)) };
+          }
+          try {
+            const res = await fetch("/api/send-invoice", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                to: emails,
+                subject: `【請求書】${inv.docNo} ${coInfo.name || ""}`,
+                html: `<div style="font-family:sans-serif;color:#333;">
+                  <p>${cl.name || ""} ${cl.honorific || "御中"}</p>
+                  <p>いつもお世話になっております。<br>${coInfo.name || ""}です。</p>
+                  <p>請求書（${inv.docNo}）をお送りいたします。</p>
+                  <p>金額：&yen;${fmt(grandTotal)}</p>
+                  <p>ご確認のほど、よろしくお願いいたします。</p>
+                  <hr style="border:none;border-top:1px solid #ddd;margin:20px 0">
+                  <p style="font-size:12px;color:#888">${coInfo.name || ""}<br>${coInfo.address || ""}<br>TEL ${coInfo.tel || ""}</p>
+                </div>`,
+              }),
+            });
+            if (res.ok) {
+              await addDoc(collection(db, "sendHistory"), {
+                docNo: inv.docNo, invoiceId: invRef.id, clientId: form.clientId,
+                clientName: cl.name || "", email: getEmailStr(cl), method: "auto",
+                memo: "納品書作成時の自動発行・送信", amount: grandTotal, sentAt: serverTimestamp(), sentBy: "immediate-auto",
+              });
+              await updateDoc(doc(db, "invoices", invRef.id), { sentStatus: "sent", lastSentAt: serverTimestamp() });
+            }
+          } catch (e) { console.warn("自動送信エラー:", e.message); }
+        }
+        alert(`納品書を作成し、請求書（${inv.docNo}）を自動発行しました${emails.length && cl.sendMode === "auto" ? "（メール送信済み）" : ""}`);
+        onSave();
+        return;
+      }
+    }
     onSave();
   };
   return (
@@ -1251,7 +1315,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
           </tbody>
         </table>
       </div>
-      {showForm && <DeliveryForm clients={clients} products={products} deliveries={deliveries} clientPrices={clientPrices} divisions={divisions} company={company} editing={editing}
+      {showForm && <DeliveryForm clients={clients} products={products} deliveries={deliveries} clientPrices={clientPrices} divisions={divisions} company={company} invoices={invoices} balances={balances} editing={editing}
         onSave={() => setShowForm(false)} onClose={() => setShowForm(false)} />}
       {printTarget && <PrintModeModal invoice={printTarget.invoice} delivery={printTarget.delivery}
         clients={clients} company={company} balances={balances} divisions={divisions} onClose={() => setPrintTarget(null)} />}
@@ -4429,6 +4493,13 @@ function SettingsPage({ company, setCompany, isAdmin, currentUser }) {
               <span style={{ fontSize: 13 }}>再請求時に承認を必要とする</span>
             </label>
             <div style={{ fontSize: 11, color: C.gray, marginTop: 4 }}>OFFにすると、残高管理から直接メール/Stripe請求を送信します</div>
+          </div>
+          <div style={s.col}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+              <input type="checkbox" checked={form.immediateAutoInvoice === true} onChange={e => setF("immediateAutoInvoice", e.target.checked)} />
+              <span style={{ fontSize: 13 }}>即時請求は納品書作成時に自動で請求書発行する</span>
+            </label>
+            <div style={{ fontSize: 11, color: C.gray, marginTop: 4 }}>ONにすると、即時請求の取引先は納品書保存と同時に請求書が発行されます（承認不要）</div>
           </div>
         </div>
       </div>
