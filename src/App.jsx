@@ -1084,12 +1084,12 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [printTarget, setPrintTarget] = useState(null);
+  const [selected, setSelected] = useState(new Set());
   const filtered = deliveries.filter(d => {
     const cn = clients.find(c => c.id === d.clientId)?.name || "";
     return cn.includes(search) || (d.docNo || "").includes(search);
   });
-  const deleteD = async (id) => {
-    if (!confirm("削除しますか？")) return;
+  const deleteDSingle = async (id) => {
     await deleteDoc(doc(db, "deliveries", id));
     // 関連する承認待ち（pendingBillings）を削除
     const pbSnap = await getDocs(query(collection(db, "pendingBillings"), where("status", "==", "pending")));
@@ -1098,6 +1098,28 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
       const delIds = d.deliveryIds ? (Array.isArray(d.deliveryIds) ? d.deliveryIds : [d.deliveryIds]) : (d.deliveryId ? [d.deliveryId] : []);
       if (delIds.includes(id)) await deleteDoc(pbDoc.ref);
     }
+  };
+  const deleteD = async (id) => {
+    if (!confirm("削除しますか？")) return;
+    await deleteDSingle(id);
+  };
+  const bulkDelD = async () => {
+    if (!selected.size) return;
+    if (!confirm(`${selected.size}件の納品書を削除しますか？`)) return;
+    // pendingBillingsを1回だけ取得
+    const pbSnap = await getDocs(query(collection(db, "pendingBillings"), where("status", "==", "pending")));
+    const batch = writeBatch(db);
+    for (const id of selected) {
+      batch.delete(doc(db, "deliveries", id));
+      // 関連するpendingBillingsも削除
+      for (const pbDoc of pbSnap.docs) {
+        const d = pbDoc.data();
+        const delIds = d.deliveryIds ? (Array.isArray(d.deliveryIds) ? d.deliveryIds : [d.deliveryIds]) : (d.deliveryId ? [d.deliveryId] : []);
+        if (delIds.includes(id)) batch.delete(pbDoc.ref);
+      }
+    }
+    await batch.commit();
+    setSelected(new Set());
   };
   const issueInvoice = async (d) => {
     const cl = clients.find(c => c.id === d.clientId);
@@ -1182,13 +1204,21 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
         <input style={s.input} placeholder="取引先名・伝票番号で検索" value={search} onChange={e => setSearch(e.target.value)} />
       </div>
       <div style={s.card}>
+        {isAdmin && selected.size > 0 && (
+          <div style={{marginBottom:12,display:"flex",gap:12,alignItems:"center"}}>
+            <span style={{fontSize:13,fontWeight:700,color:C.navy}}>{selected.size}件選択中</span>
+            <button style={{...s.btn("red"),padding:"4px 12px",fontSize:12}} onClick={bulkDelD}>一括削除</button>
+            <button style={{...s.btn("light"),padding:"4px 12px",fontSize:12}} onClick={()=>setSelected(new Set())}>選択解除</button>
+          </div>
+        )}
         <table style={s.table}>
-          <thead><tr><th style={s.th}>伝票番号</th><th style={s.th}>日付</th><th style={s.th}>取引先</th><th style={s.th}>金額</th><th style={s.th}>状態</th><th style={s.th}>操作</th></tr></thead>
+          <thead><tr>{isAdmin && <th style={s.th}><input type="checkbox" onChange={e=>setSelected(e.target.checked?new Set(filtered.map(d=>d.id)):new Set())} checked={filtered.length>0&&filtered.every(d=>selected.has(d.id))}/></th>}<th style={s.th}>伝票番号</th><th style={s.th}>日付</th><th style={s.th}>取引先</th><th style={s.th}>金額</th><th style={s.th}>状態</th><th style={s.th}>操作</th></tr></thead>
           <tbody>
             {filtered.map(d => {
               const client = clients.find(c => c.id === d.clientId);
               return (
-                <tr key={d.id}>
+                <tr key={d.id} style={selected.has(d.id)?{background:"#EBF5FB"}:{}}>
+                  {isAdmin && <td style={s.td}><input type="checkbox" checked={selected.has(d.id)} onChange={e=>{const n=new Set(selected);e.target.checked?n.add(d.id):n.delete(d.id);setSelected(n);}}/></td>}
                   <td style={s.td}>{d.docNo}</td><td style={s.td}>{d.date}</td>
                   <td style={s.td}>{client?.name || "—"}<br /><span style={{ fontSize: 11, color: C.gray }}>{(client?.billingType === "closing" || client?.billingType === "monthly") ? closingDaysLabel(client?.closingDays || [0]) : "即時"}</span></td>
                   <td style={s.td}>¥{fmt(d.total)}</td>
@@ -2898,6 +2928,7 @@ function ClientsPage({ clients, divisions, isAdmin }) {
   const [editing, setEditing] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [selected, setSelected] = useState(new Set());
   const setF = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const save = async () => {
     if (!form.name) return alert("取引先名を入力してください");
@@ -2914,6 +2945,14 @@ function ClientsPage({ clients, divisions, isAdmin }) {
     setEditing(c); setShowForm(true);
   };
   const del = async (id) => { if (confirm("削除しますか？")) await deleteDoc(doc(db, "clients", id)); };
+  const bulkDel = async () => {
+    if (!selected.size) return;
+    if (!confirm(`${selected.size}件の取引先を削除しますか？`)) return;
+    const batch = writeBatch(db);
+    selected.forEach(id => batch.delete(doc(db, "clients", id)));
+    await batch.commit();
+    setSelected(new Set());
+  };
   const handleCSV = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -3067,13 +3106,21 @@ function ClientsPage({ clients, divisions, isAdmin }) {
         </div>
       )}
       <div style={s.card}>
+        {isAdmin && selected.size > 0 && (
+          <div style={{marginBottom:12,display:"flex",gap:12,alignItems:"center"}}>
+            <span style={{fontSize:13,fontWeight:700,color:C.navy}}>{selected.size}件選択中</span>
+            <button style={{...s.btn("red"),padding:"4px 12px",fontSize:12}} onClick={bulkDel}>一括削除</button>
+            <button style={{...s.btn("light"),padding:"4px 12px",fontSize:12}} onClick={()=>setSelected(new Set())}>選択解除</button>
+          </div>
+        )}
         <table style={s.table}>
-          <thead><tr><th style={s.th}>会社名</th><th style={s.th}>事業部</th><th style={s.th}>電話</th><th style={s.th}>請求タイプ</th><th style={s.th}>区分</th><th style={s.th}>操作</th></tr></thead>
+          <thead><tr>{isAdmin && <th style={s.th}><input type="checkbox" onChange={e=>setSelected(e.target.checked?new Set(clients.map(c=>c.id)):new Set())} checked={clients.length>0&&clients.every(c=>selected.has(c.id))}/></th>}<th style={s.th}>会社名</th><th style={s.th}>事業部</th><th style={s.th}>電話</th><th style={s.th}>請求タイプ</th><th style={s.th}>区分</th><th style={s.th}>操作</th></tr></thead>
           <tbody>
             {clients.map(c => {
               const div = divisions.find(d => d.id === c.divisionId);
               return (
-              <tr key={c.id}>
+              <tr key={c.id} style={selected.has(c.id)?{background:"#EBF5FB"}:{}}>
+                {isAdmin && <td style={s.td}><input type="checkbox" checked={selected.has(c.id)} onChange={e=>{const n=new Set(selected);e.target.checked?n.add(c.id):n.delete(c.id);setSelected(n);}}/></td>}
                 <td style={s.td}>{c.name}</td>
                 <td style={s.td}>{div ? <span style={s.badge("blue")}>{div.name}</span> : "—"}</td>
                 <td style={s.td}>{c.tel}</td>
@@ -3102,6 +3149,7 @@ function ProductsPage({ products, company, isAdmin }) {
   const [showForm, setShowForm] = useState(false);
   const [importing, setImporting] = useState(false);
   const [catFilter, setCatFilter] = useState("");
+  const [selected, setSelected] = useState(new Set());
   const categories = [...new Set(products.map(p => p.category).filter(Boolean))].sort((a,b) => a.localeCompare(b,"ja"));
   const setF = (k,v) => setForm(f => ({...f,[k]:v}));
   const save = async () => {
@@ -3116,6 +3164,14 @@ function ProductsPage({ products, company, isAdmin }) {
   };
   const edit = (p) => { setForm({...p,price:String(p.price),taxRate:p.taxRate!==undefined?p.taxRate:10,category:p.category||""}); setEditing(p); setShowForm(true); };
   const del = async (id) => { if (confirm("削除しますか？")) await deleteDoc(doc(db,"products",id)); };
+  const bulkDel = async () => {
+    if (!selected.size) return;
+    if (!confirm(`${selected.size}件の商品を削除しますか？`)) return;
+    const batch = writeBatch(db);
+    selected.forEach(id => batch.delete(doc(db, "products", id)));
+    await batch.commit();
+    setSelected(new Set());
+  };
   const handleCSV = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -3223,11 +3279,19 @@ function ProductsPage({ products, company, isAdmin }) {
             </select>
           </div>
         )}
+        {isAdmin && selected.size > 0 && (
+          <div style={{marginBottom:12,display:"flex",gap:12,alignItems:"center"}}>
+            <span style={{fontSize:13,fontWeight:700,color:C.navy}}>{selected.size}件選択中</span>
+            <button style={{...s.btn("red"),padding:"4px 12px",fontSize:12}} onClick={bulkDel}>一括削除</button>
+            <button style={{...s.btn("light"),padding:"4px 12px",fontSize:12}} onClick={()=>setSelected(new Set())}>選択解除</button>
+          </div>
+        )}
         <table style={s.table}>
-          <thead><tr><th style={s.th}>商品名</th><th style={s.th}>コード</th><th style={s.th}>カテゴリ</th><th style={s.th}>JAN</th><th style={s.th}>単位</th><th style={s.th}>標準単価</th><th style={s.th}>税率</th><th style={s.th}>備考</th><th style={s.th}>操作</th></tr></thead>
+          <thead><tr>{isAdmin && <th style={s.th}><input type="checkbox" onChange={e=>{const f=[...products].filter(p=>!catFilter||p.category===catFilter);setSelected(e.target.checked?new Set(f.map(p=>p.id)):new Set());}} checked={(() => {const f=[...products].filter(p=>!catFilter||p.category===catFilter);return f.length>0&&f.every(p=>selected.has(p.id));})()}/></th>}<th style={s.th}>商品名</th><th style={s.th}>コード</th><th style={s.th}>カテゴリ</th><th style={s.th}>JAN</th><th style={s.th}>単位</th><th style={s.th}>標準単価</th><th style={s.th}>税率</th><th style={s.th}>備考</th><th style={s.th}>操作</th></tr></thead>
           <tbody>
             {[...products].filter(p => !catFilter || p.category === catFilter).sort((a,b)=>(a.code||"").localeCompare(b.code||"","ja",{numeric:true})).map(p => (
-              <tr key={p.id}>
+              <tr key={p.id} style={selected.has(p.id)?{background:"#EBF5FB"}:{}}>
+                {isAdmin && <td style={s.td}><input type="checkbox" checked={selected.has(p.id)} onChange={e=>{const n=new Set(selected);e.target.checked?n.add(p.id):n.delete(p.id);setSelected(n);}}/></td>}
                 <td style={s.td}>{p.name}</td><td style={s.td}>{p.code}</td><td style={s.td}>{p.category||""}</td><td style={s.td}>{p.jan||""}</td>
                 <td style={s.td}>{p.unit}</td><td style={s.td}>¥{fmt(p.price)}</td><td style={s.td}>{p.taxRate !== undefined ? `${p.taxRate}%` : "10%"}</td><td style={s.td}>{p.notes}</td>
                 <td style={s.td}>
@@ -3253,6 +3317,7 @@ function ClientPricesPage({ clients, products, clientPrices, isAdmin }) {
   const [formPrice, setFormPrice] = useState("");
   const [editing, setEditing] = useState(null);
   const [importing, setImporting] = useState(false);
+  const [selected, setSelected] = useState(new Set());
 
   const filtered = selClient ? clientPrices.filter(cp => cp.clientId === selClient) : clientPrices;
 
@@ -3276,6 +3341,14 @@ function ClientPricesPage({ clients, products, clientPrices, isAdmin }) {
   };
 
   const del = async (id) => { if (confirm("削除しますか？")) await deleteDoc(doc(db, "clientPrices", id)); };
+  const bulkDel = async () => {
+    if (!selected.size) return;
+    if (!confirm(`${selected.size}件の取引先別単価を削除しますか？`)) return;
+    const batch = writeBatch(db);
+    selected.forEach(id => batch.delete(doc(db, "clientPrices", id)));
+    await batch.commit();
+    setSelected(new Set());
+  };
 
   const edit = (cp) => {
     setSelClient(cp.clientId); setFormProduct(cp.productId); setFormPrice(String(cp.price)); setEditing(cp); setShowForm(true);
@@ -3407,15 +3480,23 @@ function ClientPricesPage({ clients, products, clientPrices, isAdmin }) {
         </div>
       )}
       <div style={s.card}>
+        {isAdmin && selected.size > 0 && (
+          <div style={{marginBottom:12,display:"flex",gap:12,alignItems:"center"}}>
+            <span style={{fontSize:13,fontWeight:700,color:C.navy}}>{selected.size}件選択中</span>
+            <button style={{...s.btn("red"),padding:"4px 12px",fontSize:12}} onClick={bulkDel}>一括削除</button>
+            <button style={{...s.btn("light"),padding:"4px 12px",fontSize:12}} onClick={()=>setSelected(new Set())}>選択解除</button>
+          </div>
+        )}
         <table style={s.table}>
-          <thead><tr><th style={s.th}>取引先</th><th style={s.th}>商品名</th><th style={s.th}>コード</th><th style={s.th}>標準単価</th><th style={s.th}>取引先単価</th><th style={s.th}>差額</th><th style={s.th}>操作</th></tr></thead>
+          <thead><tr>{isAdmin && <th style={s.th}><input type="checkbox" onChange={e=>setSelected(e.target.checked?new Set(filtered.map(cp=>cp.id)):new Set())} checked={filtered.length>0&&filtered.every(cp=>selected.has(cp.id))}/></th>}<th style={s.th}>取引先</th><th style={s.th}>商品名</th><th style={s.th}>コード</th><th style={s.th}>標準単価</th><th style={s.th}>取引先単価</th><th style={s.th}>差額</th><th style={s.th}>操作</th></tr></thead>
           <tbody>
             {filtered.map(cp => {
               const cl = clients.find(c => c.id === cp.clientId);
               const pr = products.find(p => p.id === cp.productId);
               const diff = (cp.price || 0) - (pr?.price || 0);
               return (
-                <tr key={cp.id}>
+                <tr key={cp.id} style={selected.has(cp.id)?{background:"#EBF5FB"}:{}}>
+                  {isAdmin && <td style={s.td}><input type="checkbox" checked={selected.has(cp.id)} onChange={e=>{const n=new Set(selected);e.target.checked?n.add(cp.id):n.delete(cp.id);setSelected(n);}}/></td>}
                   <td style={s.td}>{cl?.name || "—"}</td>
                   <td style={s.td}>{pr?.name || "—"}</td>
                   <td style={s.td}>{pr?.code || ""}</td>
@@ -3431,7 +3512,7 @@ function ClientPricesPage({ clients, products, clientPrices, isAdmin }) {
                 </tr>
               );
             })}
-            {!filtered.length && <tr><td colSpan={7} style={{ ...s.td, textAlign: "center", color: C.gray }}>データがありません</td></tr>}
+            {!filtered.length && <tr><td colSpan={isAdmin?8:7} style={{ ...s.td, textAlign: "center", color: C.gray }}>データがありません</td></tr>}
           </tbody>
         </table>
       </div>
@@ -3561,6 +3642,7 @@ function DivisionsPage({ divisions, isAdmin }) {
   const [form, setForm] = useState(empty);
   const [editing, setEditing] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [selected, setSelected] = useState(new Set());
   const setF = (k,v) => setForm(f => ({...f,[k]:v}));
   const save = async () => {
     if (!form.name) return alert("事業部名を入力してください");
@@ -3574,6 +3656,14 @@ function DivisionsPage({ divisions, isAdmin }) {
   };
   const edit = (d) => { setForm(d); setEditing(d); setShowForm(true); };
   const del = async (id) => { if (confirm("削除しますか？")) await deleteDoc(doc(db,"divisions",id)); };
+  const bulkDel = async () => {
+    if (!selected.size) return;
+    if (!confirm(`${selected.size}件の事業部を削除しますか？`)) return;
+    const batch = writeBatch(db);
+    selected.forEach(id => batch.delete(doc(db, "divisions", id)));
+    await batch.commit();
+    setSelected(new Set());
+  };
   return (
     <div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
@@ -3612,11 +3702,19 @@ function DivisionsPage({ divisions, isAdmin }) {
         </div>
       )}
       <div style={s.card}>
+        {isAdmin && selected.size > 0 && (
+          <div style={{marginBottom:12,display:"flex",gap:12,alignItems:"center"}}>
+            <span style={{fontSize:13,fontWeight:700,color:C.navy}}>{selected.size}件選択中</span>
+            <button style={{...s.btn("red"),padding:"4px 12px",fontSize:12}} onClick={bulkDel}>一括削除</button>
+            <button style={{...s.btn("light"),padding:"4px 12px",fontSize:12}} onClick={()=>setSelected(new Set())}>選択解除</button>
+          </div>
+        )}
         <table style={s.table}>
-          <thead><tr><th style={s.th}>事業部名</th><th style={s.th}>接頭辞</th><th style={s.th}>住所</th><th style={s.th}>電話</th><th style={s.th}>口座</th><th style={s.th}>操作</th></tr></thead>
+          <thead><tr>{isAdmin && <th style={s.th}><input type="checkbox" onChange={e=>setSelected(e.target.checked?new Set(divisions.map(d=>d.id)):new Set())} checked={divisions.length>0&&divisions.every(d=>selected.has(d.id))}/></th>}<th style={s.th}>事業部名</th><th style={s.th}>接頭辞</th><th style={s.th}>住所</th><th style={s.th}>電話</th><th style={s.th}>口座</th><th style={s.th}>操作</th></tr></thead>
           <tbody>
             {divisions.map(d => (
-              <tr key={d.id}>
+              <tr key={d.id} style={selected.has(d.id)?{background:"#EBF5FB"}:{}}>
+                {isAdmin && <td style={s.td}><input type="checkbox" checked={selected.has(d.id)} onChange={e=>{const n=new Set(selected);e.target.checked?n.add(d.id):n.delete(d.id);setSelected(n);}}/></td>}
                 <td style={s.td}><strong>{d.name}</strong></td>
                 <td style={s.td}><span style={s.badge("blue")}>{d.prefix}</span></td>
                 <td style={s.td}>{d.address||"—"}</td>
@@ -3630,7 +3728,7 @@ function DivisionsPage({ divisions, isAdmin }) {
                 </td>
               </tr>
             ))}
-            {!divisions.length && <tr><td colSpan={6} style={{...s.td,textAlign:"center",color:C.gray}}>事業部が登録されていません</td></tr>}
+            {!divisions.length && <tr><td colSpan={isAdmin?7:6} style={{...s.td,textAlign:"center",color:C.gray}}>事業部が登録されていません</td></tr>}
           </tbody>
         </table>
       </div>
