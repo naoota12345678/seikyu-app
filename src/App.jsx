@@ -3055,24 +3055,28 @@ function ClientsPage({ clients, divisions, isAdmin }) {
         </div>
       </div>
       {showForm && (
-        <div style={s.card}>
-          <h3 style={{ margin: "0 0 16px", color: C.navy }}>{editing ? "取引先を編集" : "取引先を追加"}</h3>
-          <div style={{ ...s.row, marginBottom: 12 }}>
-            <div style={s.col}><span style={s.label}>会社名 *</span><input style={s.input} value={form.name} onChange={e => setF("name",e.target.value)} /></div>
-            <div style={s.col}><span style={s.label}>フリガナ</span><input style={s.input} value={form.kana} onChange={e => setF("kana",e.target.value)} /></div>
-            <div style={s.col}><span style={s.label}>敬称</span>
-              <select style={{...s.select,width:100}} value={form.honorific||"御中"} onChange={e => setF("honorific",e.target.value)}>
-                <option value="御中">御中</option><option value="様">様</option><option value="殿">殿</option><option value="">なし</option>
-              </select>
+        <div style={s.modal} onClick={()=>setShowForm(false)}>
+          <div style={{...s.modalBox,maxWidth:800}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:16}}>
+              <h3 style={{margin:0,color:C.navy}}>{editing ? "取引先を編集" : "取引先を追加"}</h3>
+              <button style={s.btn("light")} onClick={()=>setShowForm(false)}>✕</button>
             </div>
-            <div style={s.col}><span style={s.label}>電話番号</span><input style={s.input} value={form.tel} onChange={e => setF("tel",e.target.value)} /></div>
-            <div style={s.col}><span style={s.label}>メール1</span><input style={s.input} value={form.email} onChange={e => setF("email",e.target.value)} /></div>
-            <div style={s.col}><span style={s.label}>メール2</span><input style={s.input} value={form.email2||""} onChange={e => setF("email2",e.target.value)} /></div>
-            <div style={s.col}><span style={s.label}>メール3</span><input style={s.input} value={form.email3||""} onChange={e => setF("email3",e.target.value)} /></div>
-            <div style={s.col}><span style={s.label}>メール4</span><input style={s.input} value={form.email4||""} onChange={e => setF("email4",e.target.value)} /></div>
-          </div>
-          <div style={{ ...s.row, marginBottom: 12 }}>
-            <div style={s.col}><span style={s.label}>住所</span><input style={{ ...s.input, minWidth: 300 }} value={form.address} onChange={e => setF("address",e.target.value)} /></div>
+            <div style={{ ...s.row, marginBottom: 12 }}>
+              <div style={s.col}><span style={s.label}>会社名 *</span><input style={s.input} value={form.name} onChange={e => setF("name",e.target.value)} /></div>
+              <div style={s.col}><span style={s.label}>フリガナ</span><input style={s.input} value={form.kana} onChange={e => setF("kana",e.target.value)} /></div>
+              <div style={s.col}><span style={s.label}>敬称</span>
+                <select style={{...s.select,width:100}} value={form.honorific||"御中"} onChange={e => setF("honorific",e.target.value)}>
+                  <option value="御中">御中</option><option value="様">様</option><option value="殿">殿</option><option value="">なし</option>
+                </select>
+              </div>
+              <div style={s.col}><span style={s.label}>電話番号</span><input style={s.input} value={form.tel} onChange={e => setF("tel",e.target.value)} /></div>
+              <div style={s.col}><span style={s.label}>メール1</span><input style={s.input} value={form.email} onChange={e => setF("email",e.target.value)} /></div>
+              <div style={s.col}><span style={s.label}>メール2</span><input style={s.input} value={form.email2||""} onChange={e => setF("email2",e.target.value)} /></div>
+              <div style={s.col}><span style={s.label}>メール3</span><input style={s.input} value={form.email3||""} onChange={e => setF("email3",e.target.value)} /></div>
+              <div style={s.col}><span style={s.label}>メール4</span><input style={s.input} value={form.email4||""} onChange={e => setF("email4",e.target.value)} /></div>
+            </div>
+            <div style={{ ...s.row, marginBottom: 12 }}>
+              <div style={s.col}><span style={s.label}>住所</span><input style={{ ...s.input, minWidth: 300 }} value={form.address} onChange={e => setF("address",e.target.value)} /></div>
             <div style={s.col}><span style={s.label}>請求タイプ</span>
               <select style={s.select} value={form.billingType} onChange={e => { setF("billingType",e.target.value); if(e.target.value==="immediate") setF("closingDays",[]); if(e.target.value==="closing" && (!form.closingDays||!form.closingDays.length)) setF("closingDays",[0]); }}>
                 <option value="immediate">即時請求</option><option value="closing">締日請求</option>
@@ -3109,15 +3113,16 @@ function ClientsPage({ clients, divisions, isAdmin }) {
                 {divisions.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
             </div>
-            <div style={s.col}><span style={s.label}>単発取引先</span>
-              <label style={{ display:"flex",alignItems:"center",gap:6,padding:"8px 0" }}>
-                <input type="checkbox" checked={form.isOneTime} onChange={e => setF("isOneTime",e.target.checked)} />単発フラグ
-              </label>
+              <div style={s.col}><span style={s.label}>単発取引先</span>
+                <label style={{ display:"flex",alignItems:"center",gap:6,padding:"8px 0" }}>
+                  <input type="checkbox" checked={form.isOneTime} onChange={e => setF("isOneTime",e.target.checked)} />単発フラグ
+                </label>
+              </div>
             </div>
-          </div>
-          <div style={{ ...s.row, justifyContent: "flex-end", gap: 8 }}>
-            <button style={s.btn("light")} onClick={() => setShowForm(false)}>キャンセル</button>
-            <button style={s.btn("primary")} onClick={save}>{editing ? "更新" : "保存"}</button>
+            <div style={{ ...s.row, justifyContent: "flex-end", gap: 8 }}>
+              <button style={s.btn("light")} onClick={() => setShowForm(false)}>キャンセル</button>
+              <button style={s.btn("primary")} onClick={save}>{editing ? "更新" : "保存"}</button>
+            </div>
           </div>
         </div>
       )}
@@ -3257,31 +3262,36 @@ function ProductsPage({ products, company, isAdmin }) {
         </div>
       </div>
       {showForm && (
-        <div style={s.card}>
-          <h3 style={{margin:"0 0 16px",color:C.navy}}>{editing?"商品を編集":"商品を追加"}</h3>
-          <div style={{...s.row,marginBottom:12}}>
-            <div style={s.col}><span style={s.label}>商品名 *</span><input style={s.input} value={form.name} onChange={e=>setF("name",e.target.value)} /></div>
-            <div style={s.col}><span style={s.label}>商品コード *</span><input style={s.input} value={form.code} onChange={e=>setF("code",e.target.value)} /></div>
-            <div style={s.col}><span style={s.label}>JANコード</span><input style={s.input} value={form.jan||""} onChange={e=>setF("jan",e.target.value)} placeholder="任意" /></div>
-            <div style={s.col}><span style={s.label}>単位</span><input style={{...s.input,width:80}} value={form.unit} onChange={e=>setF("unit",e.target.value)} placeholder="袋" /></div>
-            <div style={s.col}><span style={s.label}>標準単価</span><input style={{...s.input,width:120}} type="number" value={form.price} onChange={e=>setF("price",e.target.value)} /></div>
-            <div style={s.col}><span style={s.label}>税率</span>
-              <select style={{...s.select,width:80}} value={(() => { const r = form.taxRate !== undefined && form.taxRate !== null && form.taxRate !== "" ? Number(form.taxRate) : 10; return r === 10 || r === 8 || r === 0 ? String(r) : "custom"; })()} onChange={e => setF("taxRate", e.target.value === "custom" ? form.taxRate : Number(e.target.value))}>
-                <option value="10">10%</option><option value="8">8%</option><option value="0">0%</option><option value="custom">自由</option>
-              </select>
-              {(() => { const r = form.taxRate !== undefined && form.taxRate !== null && form.taxRate !== "" ? Number(form.taxRate) : 10; return r !== 10 && r !== 8 && r !== 0 ? <input style={{...s.input,width:50,marginLeft:4}} type="number" min={0} max={100} value={r} onChange={e => setF("taxRate", Number(e.target.value))} /> : null; })()}
+        <div style={s.modal} onClick={()=>setShowForm(false)}>
+          <div style={{...s.modalBox,maxWidth:700}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:16}}>
+              <h3 style={{margin:0,color:C.navy}}>{editing?"商品を編集":"商品を追加"}</h3>
+              <button style={s.btn("light")} onClick={()=>setShowForm(false)}>✕</button>
             </div>
-            <div style={s.col}><span style={s.label}>カテゴリ</span>
-              <div style={{display:"flex",gap:4}}>
-                <input style={{...s.input,minWidth:120}} value={form.category} onChange={e=>setF("category",e.target.value)} placeholder="例: 食品" list="cat-list" />
-                <datalist id="cat-list">{categories.map(c => <option key={c} value={c} />)}</datalist>
+            <div style={{...s.row,marginBottom:12}}>
+              <div style={s.col}><span style={s.label}>商品名 *</span><input style={s.input} value={form.name} onChange={e=>setF("name",e.target.value)} /></div>
+              <div style={s.col}><span style={s.label}>商品コード *</span><input style={s.input} value={form.code} onChange={e=>setF("code",e.target.value)} /></div>
+              <div style={s.col}><span style={s.label}>JANコード</span><input style={s.input} value={form.jan||""} onChange={e=>setF("jan",e.target.value)} placeholder="任意" /></div>
+              <div style={s.col}><span style={s.label}>単位</span><input style={{...s.input,width:80}} value={form.unit} onChange={e=>setF("unit",e.target.value)} placeholder="袋" /></div>
+              <div style={s.col}><span style={s.label}>標準単価</span><input style={{...s.input,width:120}} type="number" value={form.price} onChange={e=>setF("price",e.target.value)} /></div>
+              <div style={s.col}><span style={s.label}>税率</span>
+                <select style={{...s.select,width:80}} value={(() => { const r = form.taxRate !== undefined && form.taxRate !== null && form.taxRate !== "" ? Number(form.taxRate) : 10; return r === 10 || r === 8 || r === 0 ? String(r) : "custom"; })()} onChange={e => setF("taxRate", e.target.value === "custom" ? form.taxRate : Number(e.target.value))}>
+                  <option value="10">10%</option><option value="8">8%</option><option value="0">0%</option><option value="custom">自由</option>
+                </select>
+                {(() => { const r = form.taxRate !== undefined && form.taxRate !== null && form.taxRate !== "" ? Number(form.taxRate) : 10; return r !== 10 && r !== 8 && r !== 0 ? <input style={{...s.input,width:50,marginLeft:4}} type="number" min={0} max={100} value={r} onChange={e => setF("taxRate", Number(e.target.value))} /> : null; })()}
               </div>
+              <div style={s.col}><span style={s.label}>カテゴリ</span>
+                <div style={{display:"flex",gap:4}}>
+                  <input style={{...s.input,minWidth:120}} value={form.category} onChange={e=>setF("category",e.target.value)} placeholder="例: 食品" list="cat-list" />
+                  <datalist id="cat-list">{categories.map(c => <option key={c} value={c} />)}</datalist>
+                </div>
+              </div>
+              <div style={s.col}><span style={s.label}>備考</span><input style={{...s.input,minWidth:200}} value={form.notes} onChange={e=>setF("notes",e.target.value)} /></div>
             </div>
-            <div style={s.col}><span style={s.label}>備考</span><input style={{...s.input,minWidth:200}} value={form.notes} onChange={e=>setF("notes",e.target.value)} /></div>
-          </div>
-          <div style={{...s.row,justifyContent:"flex-end",gap:8}}>
-            <button style={s.btn("light")} onClick={()=>setShowForm(false)}>キャンセル</button>
-            <button style={s.btn("primary")} onClick={save}>{editing?"更新":"保存"}</button>
+            <div style={{...s.row,justifyContent:"flex-end",gap:8}}>
+              <button style={s.btn("light")} onClick={()=>setShowForm(false)}>キャンセル</button>
+              <button style={s.btn("primary")} onClick={save}>{editing?"更新":"保存"}</button>
+            </div>
           </div>
         </div>
       )}
@@ -3470,28 +3480,33 @@ function ClientPricesPage({ clients, products, clientPrices, isAdmin }) {
         </div>
       </div>
       {showForm && (
-        <div style={s.card}>
-          <h3 style={{ margin: "0 0 16px", color: C.navy }}>{editing ? "単価を編集" : "取引先別単価を追加"}</h3>
-          <div style={{ ...s.row, marginBottom: 12 }}>
-            <div style={s.col}><span style={s.label}>取引先 *</span>
-              <select style={s.select} value={selClient} onChange={e => setSelClient(e.target.value)}>
-                <option value="">選択してください</option>
-                {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+        <div style={s.modal} onClick={()=>setShowForm(false)}>
+          <div style={{...s.modalBox,maxWidth:600}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:16}}>
+              <h3 style={{margin:0,color:C.navy}}>{editing ? "単価を編集" : "取引先別単価を追加"}</h3>
+              <button style={s.btn("light")} onClick={()=>setShowForm(false)}>✕</button>
             </div>
-            <div style={s.col}><span style={s.label}>商品 *</span>
-              <select style={s.select} value={formProduct} onChange={e => setFormProduct(e.target.value)}>
-                <option value="">選択してください</option>
-                {products.map(p => <option key={p.id} value={p.id}>{p.name}（{p.code}）標準¥{fmt(p.price)}</option>)}
-              </select>
+            <div style={{ ...s.row, marginBottom: 12 }}>
+              <div style={s.col}><span style={s.label}>取引先 *</span>
+                <select style={s.select} value={selClient} onChange={e => setSelClient(e.target.value)}>
+                  <option value="">選択してください</option>
+                  {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+              <div style={s.col}><span style={s.label}>商品 *</span>
+                <select style={s.select} value={formProduct} onChange={e => setFormProduct(e.target.value)}>
+                  <option value="">選択してください</option>
+                  {products.map(p => <option key={p.id} value={p.id}>{p.name}（{p.code}）標準¥{fmt(p.price)}</option>)}
+                </select>
+              </div>
+              <div style={s.col}><span style={s.label}>この取引先への単価 *</span>
+                <input style={{ ...s.input, width: 140 }} type="number" value={formPrice} onChange={e => setFormPrice(e.target.value)} />
+              </div>
             </div>
-            <div style={s.col}><span style={s.label}>この取引先への単価 *</span>
-              <input style={{ ...s.input, width: 140 }} type="number" value={formPrice} onChange={e => setFormPrice(e.target.value)} />
+            <div style={{ ...s.row, justifyContent: "flex-end", gap: 8 }}>
+              <button style={s.btn("light")} onClick={()=>setShowForm(false)}>キャンセル</button>
+              <button style={s.btn("primary")} onClick={save}>{editing ? "更新" : "保存"}</button>
             </div>
-          </div>
-          <div style={{ ...s.row, justifyContent: "flex-end", gap: 8 }}>
-            <button style={s.btn("light")} onClick={() => setShowForm(false)}>キャンセル</button>
-            <button style={s.btn("primary")} onClick={save}>{editing ? "更新" : "保存"}</button>
           </div>
         </div>
       )}
@@ -3687,33 +3702,38 @@ function DivisionsPage({ divisions, isAdmin }) {
         <button style={s.btn("primary")} onClick={()=>{setEditing(null);setForm(empty);setShowForm(true);}}>＋ 追加</button>
       </div>
       {showForm && (
-        <div style={s.card}>
-          <h3 style={{margin:"0 0 16px",color:C.navy}}>{editing?"事業部を編集":"事業部を追加"}</h3>
-          <div style={{...s.row,marginBottom:12}}>
-            <div style={s.col}><span style={s.label}>事業部名 *</span><input style={s.input} value={form.name} onChange={e=>setF("name",e.target.value)} placeholder="例：自社製品事業部" /></div>
-            <div style={s.col}><span style={s.label}>接頭辞 *</span><input style={{...s.input,width:100}} value={form.prefix} onChange={e=>setF("prefix",e.target.value)} placeholder="例：A" /></div>
-            <div style={s.col}><span style={s.label}>電話番号</span><input style={s.input} value={form.tel} onChange={e=>setF("tel",e.target.value)} /></div>
-            <div style={s.col}><span style={s.label}>FAX</span><input style={s.input} value={form.fax} onChange={e=>setF("fax",e.target.value)} /></div>
-          </div>
-          <div style={{...s.row,marginBottom:12}}>
-            <div style={s.col}><span style={s.label}>住所</span><input style={{...s.input,minWidth:400}} value={form.address} onChange={e=>setF("address",e.target.value)} /></div>
-            <div style={s.col}><span style={s.label}>インボイス登録番号</span><input style={s.input} value={form.registrationNo} onChange={e=>setF("registrationNo",e.target.value)} placeholder="T6430001064243" /></div>
-          </div>
-          <h4 style={{margin:"12px 0 8px",color:C.navy,fontSize:14}}>振込先口座</h4>
-          <div style={{...s.row,marginBottom:12}}>
-            <div style={s.col}><span style={s.label}>銀行名</span><input style={s.input} value={form.bankName} onChange={e=>setF("bankName",e.target.value)} /></div>
-            <div style={s.col}><span style={s.label}>支店名</span><input style={s.input} value={form.bankBranch} onChange={e=>setF("bankBranch",e.target.value)} /></div>
-            <div style={s.col}><span style={s.label}>種別</span>
-              <select style={s.select} value={form.bankType||"普通"} onChange={e=>setF("bankType",e.target.value)}>
-                <option>普通</option><option>当座</option>
-              </select>
+        <div style={s.modal} onClick={()=>setShowForm(false)}>
+          <div style={{...s.modalBox,maxWidth:750}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:16}}>
+              <h3 style={{margin:0,color:C.navy}}>{editing?"事業部を編集":"事業部を追加"}</h3>
+              <button style={s.btn("light")} onClick={()=>setShowForm(false)}>✕</button>
             </div>
-            <div style={s.col}><span style={s.label}>口座番号</span><input style={s.input} value={form.bankNo} onChange={e=>setF("bankNo",e.target.value)} /></div>
-            <div style={s.col}><span style={s.label}>口座名義</span><input style={s.input} value={form.bankHolder} onChange={e=>setF("bankHolder",e.target.value)} /></div>
-          </div>
-          <div style={{...s.row,justifyContent:"flex-end",gap:8}}>
-            <button style={s.btn("light")} onClick={()=>setShowForm(false)}>キャンセル</button>
-            <button style={s.btn("primary")} onClick={save}>{editing?"更新":"保存"}</button>
+            <div style={{...s.row,marginBottom:12}}>
+              <div style={s.col}><span style={s.label}>事業部名 *</span><input style={s.input} value={form.name} onChange={e=>setF("name",e.target.value)} placeholder="例：自社製品事業部" /></div>
+              <div style={s.col}><span style={s.label}>接頭辞 *</span><input style={{...s.input,width:100}} value={form.prefix} onChange={e=>setF("prefix",e.target.value)} placeholder="例：A" /></div>
+              <div style={s.col}><span style={s.label}>電話番号</span><input style={s.input} value={form.tel} onChange={e=>setF("tel",e.target.value)} /></div>
+              <div style={s.col}><span style={s.label}>FAX</span><input style={s.input} value={form.fax} onChange={e=>setF("fax",e.target.value)} /></div>
+            </div>
+            <div style={{...s.row,marginBottom:12}}>
+              <div style={s.col}><span style={s.label}>住所</span><input style={{...s.input,minWidth:400}} value={form.address} onChange={e=>setF("address",e.target.value)} /></div>
+              <div style={s.col}><span style={s.label}>インボイス登録番号</span><input style={s.input} value={form.registrationNo} onChange={e=>setF("registrationNo",e.target.value)} placeholder="T6430001064243" /></div>
+            </div>
+            <h4 style={{margin:"12px 0 8px",color:C.navy,fontSize:14}}>振込先口座</h4>
+            <div style={{...s.row,marginBottom:12}}>
+              <div style={s.col}><span style={s.label}>銀行名</span><input style={s.input} value={form.bankName} onChange={e=>setF("bankName",e.target.value)} /></div>
+              <div style={s.col}><span style={s.label}>支店名</span><input style={s.input} value={form.bankBranch} onChange={e=>setF("bankBranch",e.target.value)} /></div>
+              <div style={s.col}><span style={s.label}>種別</span>
+                <select style={s.select} value={form.bankType||"普通"} onChange={e=>setF("bankType",e.target.value)}>
+                  <option>普通</option><option>当座</option>
+                </select>
+              </div>
+              <div style={s.col}><span style={s.label}>口座番号</span><input style={s.input} value={form.bankNo} onChange={e=>setF("bankNo",e.target.value)} /></div>
+              <div style={s.col}><span style={s.label}>口座名義</span><input style={s.input} value={form.bankHolder} onChange={e=>setF("bankHolder",e.target.value)} /></div>
+            </div>
+            <div style={{...s.row,justifyContent:"flex-end",gap:8}}>
+              <button style={s.btn("light")} onClick={()=>setShowForm(false)}>キャンセル</button>
+              <button style={s.btn("primary")} onClick={save}>{editing?"更新":"保存"}</button>
+            </div>
           </div>
         </div>
       )}
