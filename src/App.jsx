@@ -1083,13 +1083,18 @@ function Dashboard({ clients, deliveries, invoices, balances }) {
 // ── Deliveries ────────────────────────────────────────────────────────────────
 function DeliveriesList({ clients, deliveries, products, invoices, company, balances, clientPrices, divisions, isAdmin }) {
   const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [printTarget, setPrintTarget] = useState(null);
   const [selected, setSelected] = useState(new Set());
   const filtered = deliveries.filter(d => {
     const cn = clients.find(c => c.id === d.clientId)?.name || "";
-    return cn.includes(search) || (d.docNo || "").includes(search);
+    if (!(cn.includes(search) || (d.docNo || "").includes(search))) return false;
+    if (dateFrom && d.date < dateFrom) return false;
+    if (dateTo && d.date > dateTo) return false;
+    return true;
   });
   const deleteDSingle = async (id) => {
     await deleteDoc(doc(db, "deliveries", id));
@@ -1202,8 +1207,13 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
         <div style={s.pageTitle}>納品書一覧</div>
         <button style={s.btn("primary")} onClick={() => { setEditing(null); setShowForm(true); }}>＋ 新規作成</button>
       </div>
-      <div style={{ ...s.card, padding: "12px 20px" }}>
-        <input style={s.input} placeholder="取引先名・伝票番号で検索" value={search} onChange={e => setSearch(e.target.value)} />
+      <div style={{ ...s.card, padding: "12px 20px", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <input style={{...s.input,minWidth:200}} placeholder="取引先名・伝票番号で検索" value={search} onChange={e => setSearch(e.target.value)} />
+        <span style={{fontSize:13,color:C.gray}}>期間:</span>
+        <input type="date" style={{...s.input,width:150}} value={dateFrom} onChange={e=>setDateFrom(e.target.value)} />
+        <span style={{fontSize:13,color:C.gray}}>〜</span>
+        <input type="date" style={{...s.input,width:150}} value={dateTo} onChange={e=>setDateTo(e.target.value)} />
+        {(dateFrom||dateTo) && <button style={{...s.btn("light"),padding:"4px 10px",fontSize:12}} onClick={()=>{setDateFrom("");setDateTo("");}}>クリア</button>}
       </div>
       <div style={s.card}>
         {isAdmin && selected.size > 0 && (
@@ -1546,6 +1556,8 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
 // ── Invoices ──────────────────────────────────────────────────────────────────
 function InvoicesList({ clients, invoices, deliveries, company, balances, divisions, isAdmin }) {
   const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [printTarget, setPrintTarget] = useState(null);
   const [balTarget, setBalTarget] = useState(null);
   const [sendTarget, setSendTarget] = useState(null);
@@ -1558,7 +1570,10 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
   const [stripeSending, setStripeSending] = useState(false);
   const filtered = invoices.filter(i => {
     const cn = clients.find(c => c.id === i.clientId)?.name || "";
-    return cn.includes(search) || (i.docNo || "").includes(search);
+    if (!(cn.includes(search) || (i.docNo || "").includes(search))) return false;
+    if (dateFrom && i.date < dateFrom) return false;
+    if (dateTo && i.date > dateTo) return false;
+    return true;
   });
   const totalBal = Object.values(balances).reduce((a, b) => a + (b.currentBalance || 0), 0);
   const del = async (id) => {
@@ -1575,8 +1590,13 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
   return (
     <div>
       <div style={s.pageTitle}>請求書一覧</div>
-      <div style={{ ...s.card, padding: "12px 20px", display: "flex", gap: 16, alignItems: "center" }}>
-        <input style={s.input} placeholder="取引先名・請求番号で検索" value={search} onChange={e => setSearch(e.target.value)} />
+      <div style={{ ...s.card, padding: "12px 20px", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <input style={{...s.input,minWidth:200}} placeholder="取引先名・請求番号で検索" value={search} onChange={e => setSearch(e.target.value)} />
+        <span style={{fontSize:13,color:C.gray}}>期間:</span>
+        <input type="date" style={{...s.input,width:150}} value={dateFrom} onChange={e=>setDateFrom(e.target.value)} />
+        <span style={{fontSize:13,color:C.gray}}>〜</span>
+        <input type="date" style={{...s.input,width:150}} value={dateTo} onChange={e=>setDateTo(e.target.value)} />
+        {(dateFrom||dateTo) && <button style={{...s.btn("light"),padding:"4px 10px",fontSize:12}} onClick={()=>{setDateFrom("");setDateTo("");}}>クリア</button>}
         <div style={{ fontSize: 15, fontWeight: 700, color: C.red, marginLeft: "auto" }}>未収残高合計：¥{fmt(totalBal)}</div>
       </div>
       <div style={s.card}>
@@ -2931,6 +2951,8 @@ function ClientsPage({ clients, divisions, isAdmin }) {
   const [showForm, setShowForm] = useState(false);
   const [importing, setImporting] = useState(false);
   const [selected, setSelected] = useState(new Set());
+  const [search, setSearch] = useState("");
+  const filteredClients = clients.filter(c => !search || (c.name||"").includes(search) || (c.kana||"").includes(search) || (c.tel||"").includes(search));
   const setF = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const save = async () => {
     if (!form.name) return alert("取引先名を入力してください");
@@ -3126,6 +3148,9 @@ function ClientsPage({ clients, divisions, isAdmin }) {
           </div>
         </div>
       )}
+      <div style={{...s.card,padding:"12px 20px",marginBottom:0}}>
+        <input style={{...s.input,minWidth:240}} placeholder="会社名・フリガナ・電話で検索" value={search} onChange={e=>setSearch(e.target.value)} />
+      </div>
       <div style={s.card}>
         {isAdmin && selected.size > 0 && (
           <div style={{marginBottom:12,display:"flex",gap:12,alignItems:"center"}}>
@@ -3135,9 +3160,9 @@ function ClientsPage({ clients, divisions, isAdmin }) {
           </div>
         )}
         <table style={s.table}>
-          <thead><tr>{isAdmin && <th style={s.th}><input type="checkbox" onChange={e=>setSelected(e.target.checked?new Set(clients.map(c=>c.id)):new Set())} checked={clients.length>0&&clients.every(c=>selected.has(c.id))}/></th>}<th style={s.th}>会社名</th><th style={s.th}>事業部</th><th style={s.th}>電話</th><th style={s.th}>請求タイプ</th><th style={s.th}>区分</th><th style={s.th}>操作</th></tr></thead>
+          <thead><tr>{isAdmin && <th style={s.th}><input type="checkbox" onChange={e=>setSelected(e.target.checked?new Set(filteredClients.map(c=>c.id)):new Set())} checked={filteredClients.length>0&&filteredClients.every(c=>selected.has(c.id))}/></th>}<th style={s.th}>会社名</th><th style={s.th}>事業部</th><th style={s.th}>電話</th><th style={s.th}>請求タイプ</th><th style={s.th}>区分</th><th style={s.th}>操作</th></tr></thead>
           <tbody>
-            {clients.map(c => {
+            {filteredClients.map(c => {
               const div = divisions.find(d => d.id === c.divisionId);
               return (
               <tr key={c.id} style={selected.has(c.id)?{background:"#EBF5FB"}:{}}>
@@ -3170,6 +3195,7 @@ function ProductsPage({ products, company, isAdmin }) {
   const [showForm, setShowForm] = useState(false);
   const [importing, setImporting] = useState(false);
   const [catFilter, setCatFilter] = useState("");
+  const [search, setSearch] = useState("");
   const [selected, setSelected] = useState(new Set());
   const categories = [...new Set(products.map(p => p.category).filter(Boolean))].sort((a,b) => a.localeCompare(b,"ja"));
   const setF = (k,v) => setForm(f => ({...f,[k]:v}));
@@ -3295,16 +3321,19 @@ function ProductsPage({ products, company, isAdmin }) {
           </div>
         </div>
       )}
-      <div style={s.card}>
-        {categories.length > 0 && (
-          <div style={{marginBottom:12,display:"flex",gap:8,alignItems:"center"}}>
+      <div style={{...s.card,padding:"12px 20px",marginBottom:0}}>
+        <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
+          <input style={{...s.input,minWidth:200}} placeholder="商品名・コード・JANで検索" value={search} onChange={e=>setSearch(e.target.value)} />
+          {categories.length > 0 && <>
             <span style={{fontSize:13,color:C.gray}}>カテゴリ:</span>
             <select style={{...s.select,width:160}} value={catFilter} onChange={e=>setCatFilter(e.target.value)}>
               <option value="">すべて</option>
               {categories.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
-          </div>
-        )}
+          </>}
+        </div>
+      </div>
+      <div style={s.card}>
         {isAdmin && selected.size > 0 && (
           <div style={{marginBottom:12,display:"flex",gap:12,alignItems:"center"}}>
             <span style={{fontSize:13,fontWeight:700,color:C.navy}}>{selected.size}件選択中</span>
@@ -3313,9 +3342,9 @@ function ProductsPage({ products, company, isAdmin }) {
           </div>
         )}
         <table style={s.table}>
-          <thead><tr>{isAdmin && <th style={s.th}><input type="checkbox" onChange={e=>{const f=[...products].filter(p=>!catFilter||p.category===catFilter);setSelected(e.target.checked?new Set(f.map(p=>p.id)):new Set());}} checked={(() => {const f=[...products].filter(p=>!catFilter||p.category===catFilter);return f.length>0&&f.every(p=>selected.has(p.id));})()}/></th>}<th style={s.th}>商品名</th><th style={s.th}>コード</th><th style={s.th}>カテゴリ</th><th style={s.th}>JAN</th><th style={s.th}>単位</th><th style={s.th}>標準単価</th><th style={s.th}>税率</th><th style={s.th}>備考</th><th style={s.th}>操作</th></tr></thead>
+          <thead><tr>{isAdmin && <th style={s.th}><input type="checkbox" onChange={e=>{const f=[...products].filter(p=>(!catFilter||p.category===catFilter)&&(!search||(p.name||"").includes(search)||(p.code||"").includes(search)||(p.jan||"").includes(search)));setSelected(e.target.checked?new Set(f.map(p=>p.id)):new Set());}} checked={(() => {const f=[...products].filter(p=>(!catFilter||p.category===catFilter)&&(!search||(p.name||"").includes(search)||(p.code||"").includes(search)||(p.jan||"").includes(search)));return f.length>0&&f.every(p=>selected.has(p.id));})()}/></th>}<th style={s.th}>商品名</th><th style={s.th}>コード</th><th style={s.th}>カテゴリ</th><th style={s.th}>JAN</th><th style={s.th}>単位</th><th style={s.th}>標準単価</th><th style={s.th}>税率</th><th style={s.th}>備考</th><th style={s.th}>操作</th></tr></thead>
           <tbody>
-            {[...products].filter(p => !catFilter || p.category === catFilter).sort((a,b)=>(a.code||"").localeCompare(b.code||"","ja",{numeric:true})).map(p => (
+            {[...products].filter(p => (!catFilter || p.category === catFilter) && (!search || (p.name||"").includes(search) || (p.code||"").includes(search) || (p.jan||"").includes(search))).sort((a,b)=>(a.code||"").localeCompare(b.code||"","ja",{numeric:true})).map(p => (
               <tr key={p.id} style={selected.has(p.id)?{background:"#EBF5FB"}:{}}>
                 {isAdmin && <td style={s.td}><input type="checkbox" checked={selected.has(p.id)} onChange={e=>{const n=new Set(selected);e.target.checked?n.add(p.id):n.delete(p.id);setSelected(n);}}/></td>}
                 <td style={s.td}>{p.name}</td><td style={s.td}>{p.code}</td><td style={s.td}>{p.category||""}</td><td style={s.td}>{p.jan||""}</td>
