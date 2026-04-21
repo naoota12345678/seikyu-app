@@ -610,15 +610,25 @@ function BalanceModal({ client, balance, onClose }) {
 // ── Product Picker ────────────────────────────────────────────────────────────
 function ProductPicker({ products, onSelect, onClose }) {
   const [q, setQ] = useState("");
-  const filtered = products.filter(p => p.name?.includes(q) || p.code?.includes(q));
+  const [cat, setCat] = useState("");
+  const pickerCats = [...new Set(products.map(p => p.category).filter(Boolean))].sort((a,b) => a.localeCompare(b,"ja"));
+  const filtered = products.filter(p => (!cat || p.category === cat) && (p.name?.includes(q) || p.code?.includes(q)));
   return (
     <div style={s.modal} onClick={onClose}>
-      <div style={{ ...s.modalBox, maxWidth: 480 }} onClick={e => e.stopPropagation()}>
+      <div style={{ ...s.modalBox, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
           <h3 style={{ margin: 0, color: C.navy }}>商品を選ぶ</h3>
           <button style={s.btn("light")} onClick={onClose}>✕</button>
         </div>
-        <input style={{ ...s.input, width: "100%", marginBottom: 12 }} placeholder="商品名・コードで検索" value={q} onChange={e => setQ(e.target.value)} />
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <input style={{ ...s.input, flex: 1 }} placeholder="商品名・コードで検索" value={q} onChange={e => setQ(e.target.value)} />
+          {pickerCats.length > 0 && (
+            <select style={{ ...s.select, width: 140 }} value={cat} onChange={e => setCat(e.target.value)}>
+              <option value="">全カテゴリ</option>
+              {pickerCats.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          )}
+        </div>
         <table style={s.table}>
           <thead><tr><th style={s.th}>商品名</th><th style={s.th}>コード</th><th style={s.th}>単価</th><th style={s.th}></th></tr></thead>
           <tbody>
@@ -3087,10 +3097,12 @@ function ClientsPage({ clients, divisions, isAdmin }) {
 // ── Products ──────────────────────────────────────────────────────────────────
 function ProductsPage({ products, company, isAdmin }) {
   const defRate = company?.defaultTaxRate !== undefined ? company.defaultTaxRate : 10;
-  const [form, setForm] = useState({ name:"",code:"",jan:"",unit:"",price:"",taxRate:defRate,notes:"" });
+  const [form, setForm] = useState({ name:"",code:"",jan:"",unit:"",price:"",taxRate:defRate,notes:"",category:"" });
   const [editing, setEditing] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [catFilter, setCatFilter] = useState("");
+  const categories = [...new Set(products.map(p => p.category).filter(Boolean))].sort((a,b) => a.localeCompare(b,"ja"));
   const setF = (k,v) => setForm(f => ({...f,[k]:v}));
   const save = async () => {
     if (!form.name) return alert("商品名を入力してください");
@@ -3100,9 +3112,9 @@ function ProductsPage({ products, company, isAdmin }) {
     const data = { ...form, price: Number(form.price)||0, taxRate: Number(form.taxRate), updatedAt: serverTimestamp() };
     if (editing) await updateDoc(doc(db,"products",editing.id),data);
     else { data.createdAt = serverTimestamp(); await addDoc(collection(db,"products"),data); }
-    setShowForm(false); setEditing(null); setForm({name:"",code:"",jan:"",unit:"",price:"",taxRate:defRate,notes:""});
+    setShowForm(false); setEditing(null); setForm({name:"",code:"",jan:"",unit:"",price:"",taxRate:defRate,notes:"",category:""});
   };
-  const edit = (p) => { setForm({...p,price:String(p.price),taxRate:p.taxRate!==undefined?p.taxRate:10}); setEditing(p); setShowForm(true); };
+  const edit = (p) => { setForm({...p,price:String(p.price),taxRate:p.taxRate!==undefined?p.taxRate:10,category:p.category||""}); setEditing(p); setShowForm(true); };
   const del = async (id) => { if (confirm("削除しますか？")) await deleteDoc(doc(db,"products",id)); };
   const handleCSV = async (e) => {
     const file = e.target.files?.[0];
@@ -3117,6 +3129,7 @@ function ProductsPage({ products, company, isAdmin }) {
       const janIdx = header.findIndex(h => h.includes("JAN") || h === "JANコード" || h.toLowerCase() === "jan");
       const priceIdx = header.findIndex(h => h.includes("単価") || h.includes("価格") || h.toLowerCase() === "price");
       const notesIdx = header.findIndex(h => h.includes("備考") || h.toLowerCase() === "notes");
+      const catIdx = header.findIndex(h => h === "カテゴリ" || h.toLowerCase() === "category");
       if (nameIdx === -1) { alert("「商品名」列が見つかりません"); setImporting(false); return; }
       if (codeIdx === -1) { alert("「コード」列が見つかりません"); setImporting(false); return; }
       const rows = lines.slice(1);
@@ -3138,6 +3151,7 @@ function ProductsPage({ products, company, isAdmin }) {
           unit: "",
           price: priceIdx >= 0 ? parsePrice(cols[priceIdx]) : 0,
           notes: notesIdx >= 0 ? clean(cols[notesIdx]) : "",
+          category: catIdx >= 0 ? clean(cols[catIdx]) : "",
           updatedAt: serverTimestamp(),
         };
         const existing = existingByCode[code];
@@ -3167,7 +3181,7 @@ function ProductsPage({ products, company, isAdmin }) {
             {importing ? "インポート中..." : "CSV インポート"}
             <input type="file" accept=".csv" style={{display:"none"}} onChange={handleCSV} disabled={importing} />
           </label>
-          <button style={s.btn("primary")} onClick={()=>{setEditing(null);setForm({name:"",code:"",jan:"",unit:"",price:"",taxRate:defRate,notes:""});setShowForm(true);}}>＋ 追加</button>
+          <button style={s.btn("primary")} onClick={()=>{setEditing(null);setForm({name:"",code:"",jan:"",unit:"",price:"",taxRate:defRate,notes:"",category:""});setShowForm(true);}}>＋ 追加</button>
         </div>
       </div>
       {showForm && (
@@ -3185,6 +3199,12 @@ function ProductsPage({ products, company, isAdmin }) {
               </select>
               {(() => { const r = form.taxRate !== undefined && form.taxRate !== null && form.taxRate !== "" ? Number(form.taxRate) : 10; return r !== 10 && r !== 8 && r !== 0 ? <input style={{...s.input,width:50,marginLeft:4}} type="number" min={0} max={100} value={r} onChange={e => setF("taxRate", Number(e.target.value))} /> : null; })()}
             </div>
+            <div style={s.col}><span style={s.label}>カテゴリ</span>
+              <div style={{display:"flex",gap:4}}>
+                <input style={{...s.input,minWidth:120}} value={form.category} onChange={e=>setF("category",e.target.value)} placeholder="例: 食品" list="cat-list" />
+                <datalist id="cat-list">{categories.map(c => <option key={c} value={c} />)}</datalist>
+              </div>
+            </div>
             <div style={s.col}><span style={s.label}>備考</span><input style={{...s.input,minWidth:200}} value={form.notes} onChange={e=>setF("notes",e.target.value)} /></div>
           </div>
           <div style={{...s.row,justifyContent:"flex-end",gap:8}}>
@@ -3194,12 +3214,21 @@ function ProductsPage({ products, company, isAdmin }) {
         </div>
       )}
       <div style={s.card}>
+        {categories.length > 0 && (
+          <div style={{marginBottom:12,display:"flex",gap:8,alignItems:"center"}}>
+            <span style={{fontSize:13,color:C.gray}}>カテゴリ:</span>
+            <select style={{...s.select,width:160}} value={catFilter} onChange={e=>setCatFilter(e.target.value)}>
+              <option value="">すべて</option>
+              {categories.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+        )}
         <table style={s.table}>
-          <thead><tr><th style={s.th}>商品名</th><th style={s.th}>コード</th><th style={s.th}>JAN</th><th style={s.th}>単位</th><th style={s.th}>標準単価</th><th style={s.th}>税率</th><th style={s.th}>備考</th><th style={s.th}>操作</th></tr></thead>
+          <thead><tr><th style={s.th}>商品名</th><th style={s.th}>コード</th><th style={s.th}>カテゴリ</th><th style={s.th}>JAN</th><th style={s.th}>単位</th><th style={s.th}>標準単価</th><th style={s.th}>税率</th><th style={s.th}>備考</th><th style={s.th}>操作</th></tr></thead>
           <tbody>
-            {[...products].sort((a,b)=>(a.code||"").localeCompare(b.code||"","ja",{numeric:true})).map(p => (
+            {[...products].filter(p => !catFilter || p.category === catFilter).sort((a,b)=>(a.code||"").localeCompare(b.code||"","ja",{numeric:true})).map(p => (
               <tr key={p.id}>
-                <td style={s.td}>{p.name}</td><td style={s.td}>{p.code}</td><td style={s.td}>{p.jan||""}</td>
+                <td style={s.td}>{p.name}</td><td style={s.td}>{p.code}</td><td style={s.td}>{p.category||""}</td><td style={s.td}>{p.jan||""}</td>
                 <td style={s.td}>{p.unit}</td><td style={s.td}>¥{fmt(p.price)}</td><td style={s.td}>{p.taxRate !== undefined ? `${p.taxRate}%` : "10%"}</td><td style={s.td}>{p.notes}</td>
                 <td style={s.td}>
                   <div style={{display:"flex",gap:6}}>
