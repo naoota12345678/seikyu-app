@@ -274,7 +274,7 @@ async function savePDFToStorage(blob, path) {
 function buildQuotationHTML(q, clients, co) {
   const cl = clients.find(c => c.id === q.clientId) || {};
   return `<h1>見　積　書</h1>
-  <div class="hd"><div><div>${cl.address || ""}</div><div class="cn">${cl.name || ""} 御中</div>
+  <div class="hd"><div><div>${cl.address || ""}</div><div class="cn">${cl.name || ""} ${cl.honorific || "御中"}</div>
   <div class="meta">見積番号：${q.docNo}<br>見積日：${q.date}<br>有効期限：${q.validUntil || ""}</div></div>${coBlock(co, q, false)}</div>
   ${itemsHTML(q.items || [])}${footerHTML(q.items || [], null)}
   ${q.notes ? `<div style="margin-top:10px;font-size:11px;color:#555">備考：${q.notes}</div>` : ""}`;
@@ -283,7 +283,7 @@ function buildQuotationHTML(q, clients, co) {
 function buildDeliveryHTML(d, clients, co) {
   const cl = clients.find(c => c.id === d.clientId) || {};
   return `<h1>納　品　書</h1>
-  <div class="hd"><div><div>${cl.address || ""}</div><div class="cn">${cl.name || ""} 御中</div>
+  <div class="hd"><div><div>${cl.address || ""}</div><div class="cn">${cl.name || ""} ${cl.honorific || "御中"}</div>
   <div class="meta">伝票番号：${d.docNo}<br>売上日：${d.date}</div></div>${coBlock(co, d, false)}</div>
   ${itemsHTML(d.items || [])}${footerHTML(d.items || [], null)}
   ${d.notes ? `<div style="margin-top:10px;font-size:11px;color:#555">備考：${d.notes}</div>` : ""}`;
@@ -292,7 +292,7 @@ function buildDeliveryHTML(d, clients, co) {
 function buildInvoiceHTML(inv, clients, co) {
   const cl = clients.find(c => c.id === inv.clientId) || {};
   return `<h1>請　求　書</h1>
-  <div class="hd"><div><div>${cl.address || ""}</div><div class="cn">${cl.name || ""} 御中</div>
+  <div class="hd"><div><div>${cl.address || ""}</div><div class="cn">${cl.name || ""} ${cl.honorific || "御中"}</div>
   <div class="meta">請求番号：${inv.docNo}<br>売上日：${inv.date}<br>支払期限：${inv.dueDate || ""}</div></div>${coBlock(co, inv, true)}</div>
   ${itemsHTML(inv.items || [])}${footerHTML(inv.items || [], co)}
   ${inv.deliveryRefs?.length ? `<div style="margin-top:10px;font-size:11px;color:#555">対象納品書：${inv.deliveryRefs.join("、")}</div>` : ""}`;
@@ -329,7 +329,7 @@ function buildMeisaiHTML(inv, clients, co, bal) {
     });
   }
   return `<h1>請　求　明　細　書</h1>
-  <div class="hd"><div><div>${cl.address || ""}</div><div class="cn">${cl.name || ""} 御中</div>
+  <div class="hd"><div><div>${cl.address || ""}</div><div class="cn">${cl.name || ""} ${cl.honorific || "御中"}</div>
   <div class="meta">締切分：${inv.date}　No.${inv.docNo}</div></div>${coBlock(co, inv, true)}</div>
   <table class="bt" style="margin-bottom:16px"><thead><tr>
     <th>前回御請求額</th><th>御入金額</th><th>繰越金額</th><th>今回御買上額</th><th>消費税</th><th>今回御請求額</th>
@@ -361,7 +361,7 @@ function printQuotation(q,clients,co){
   const cl=clients.find(c=>c.id===q.clientId)||{};
   openPrint(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${baseCSS}</style></head><body>
   <h1>見　積　書</h1>
-  <div class="hd"><div><div>${cl.address||""}</div><div class="cn">${cl.name||""} 御中</div>
+  <div class="hd"><div><div>${cl.address||""}</div><div class="cn">${cl.name||""} ${cl.honorific||"御中"}</div>
   <div class="meta">見積番号：${q.docNo}<br>見積日：${q.date}<br>有効期限：${q.validUntil||""}</div></div>${coBlock(co,q,false)}</div>
   ${itemsHTML(q.items||[])}${footerHTML(q.items||[],null)}
   ${q.notes?`<div style="margin-top:10px;font-size:11px;color:#555">備考：${q.notes}</div>`:""}
@@ -372,7 +372,7 @@ function printDelivery(d,clients,co){
   const cl=clients.find(c=>c.id===d.clientId)||{};
   openPrint(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${baseCSS}</style></head><body>
   <h1>納　品　書</h1>
-  <div class="hd"><div><div>${cl.address||""}</div><div class="cn">${cl.name||""} 御中</div>
+  <div class="hd"><div><div>${cl.address||""}</div><div class="cn">${cl.name||""} ${cl.honorific||"御中"}</div>
   <div class="meta">伝票番号：${d.docNo}<br>売上日：${d.date}</div></div>${coBlock(co,d,false)}</div>
   ${itemsHTML(d.items||[])}${footerHTML(d.items||[],null)}
   ${d.notes?`<div style="margin-top:10px;font-size:11px;color:#555">備考：${d.notes}</div>`:""}
@@ -383,7 +383,7 @@ function printInvoice(inv,clients,co){
   const cl=clients.find(c=>c.id===inv.clientId)||{};
   openPrint(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${baseCSS}</style></head><body>
   <h1>請　求　書</h1>
-  <div class="hd"><div><div>${cl.address||""}</div><div class="cn">${cl.name||""} 御中</div>
+  <div class="hd"><div><div>${cl.address||""}</div><div class="cn">${cl.name||""} ${cl.honorific||"御中"}</div>
   <div class="meta">請求番号：${inv.docNo}<br>売上日：${inv.date}<br>支払期限：${inv.dueDate||""}</div></div>${coBlock(co,inv,true)}</div>
   ${itemsHTML(inv.items||[])}${footerHTML(inv.items||[],co)}
   ${inv.deliveryRefs?.length?`<div style="margin-top:10px;font-size:11px;color:#555">対象納品書：${inv.deliveryRefs.join("、")}</div>`:""}
@@ -395,11 +395,11 @@ function printCombined(d,inv,clients,co){
   openPrint(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${baseCSS}</style></head><body>
   <div class="pb">
   <h1>納　品　書</h1>
-  <div class="hd"><div><div>${cl.address||""}</div><div class="cn">${cl.name||""} 御中</div>
+  <div class="hd"><div><div>${cl.address||""}</div><div class="cn">${cl.name||""} ${cl.honorific||"御中"}</div>
   <div class="meta">伝票番号：${d.docNo}<br>売上日：${d.date}</div></div>${coBlock(co,d,false)}</div>
   ${itemsHTML(d.items||[])}${footerHTML(d.items||[],null)}</div>
   <h1>請　求　書</h1>
-  <div class="hd"><div><div>${cl.address||""}</div><div class="cn">${cl.name||""} 御中</div>
+  <div class="hd"><div><div>${cl.address||""}</div><div class="cn">${cl.name||""} ${cl.honorific||"御中"}</div>
   <div class="meta">請求番号：${inv.docNo}<br>売上日：${inv.date}<br>支払期限：${inv.dueDate||""}</div></div>${coBlock(co,inv,true)}</div>
   ${itemsHTML(inv.items||[])}${footerHTML(inv.items||[],co)}
   </body></html>`);
@@ -440,7 +440,7 @@ function printMeisai(inv,clients,co,bal){
   openPrint(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${baseCSS}</style></head><body>
   <h1>請　求　明　細　書</h1>
   <div class="hd">
-    <div><div>${cl.address||""}</div><div class="cn">${cl.name||""} 御中</div>
+    <div><div>${cl.address||""}</div><div class="cn">${cl.name||""} ${cl.honorific||"御中"}</div>
     <div class="meta">締切分：${inv.date}　No.${inv.docNo}</div></div>
     ${coBlock(co,inv,true)}
   </div>
@@ -1168,7 +1168,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
             to: getEmails(cl),
             subject: `【請求書】${inv.docNo} ${coInfo.name || ""}`,
             html: `<div style="font-family:sans-serif;color:#333;">
-              <p>${cl.name || ""} 御中</p>
+              <p>${cl.name || ""} ${cl.honorific || "御中"}</p>
               <p>いつもお世話になっております。<br>${coInfo.name || ""}です。</p>
               <p>請求書（${inv.docNo}）をお送りいたします。</p>
               <p>金額：&yen;${fmt(d.total)}</p>
@@ -1294,7 +1294,7 @@ function SendRecordModal({ invoice, clients, company, divisions, balances, onClo
           to: email,
           subject: `【請求書】${invoice.docNo} ${co.name || ""}`,
           html: `<div style="font-family:sans-serif;color:#333;">
-            <p>${cl.name} 御中</p>
+            <p>${cl.name} ${cl.honorific || "御中"}</p>
             <p>いつもお世話になっております。<br>${co.name || ""}です。</p>
             <p>請求書（${invoice.docNo}）をお送りいたします。</p>
             ${pdfLink}
@@ -1441,7 +1441,7 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
           clientId: invoice.clientId, clientName: cl.name || "", email: getEmailStr(cl),
           invoiceDocNo: invoice.docNo, invoiceIds: [invoice.id],
           total: invoice.total || 0, pdfUrl,
-          message: `${cl.name} 御中\n\nいつもお世話になっております。\n${co.name || ""}です。\n\n${message}\n\n請求番号：${invoice.docNo}\n金額：¥${Number(invoice.total||0).toLocaleString()}\n支払期限：${invoice.dueDate || "—"}`,
+          message: `${cl.name} ${cl.honorific || "御中"}\n\nいつもお世話になっております。\n${co.name || ""}です。\n\n${message}\n\n請求番号：${invoice.docNo}\n金額：¥${Number(invoice.total||0).toLocaleString()}\n支払期限：${invoice.dueDate || "—"}`,
           status: "pending", createdAt: serverTimestamp(),
         });
         setResult("approval");
@@ -1453,7 +1453,7 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
             to: getEmails(cl),
             subject: `【再送】請求書 ${invoice.docNo} ${co.name || ""}`,
             html: `<div style="font-family:sans-serif;color:#333;">
-              <p>${cl.name} 御中</p>
+              <p>${cl.name} ${cl.honorific || "御中"}</p>
               <p>いつもお世話になっております。<br>${co.name || ""}です。</p>
               <p style="white-space:pre-line">${message.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</p>
               ${pdfLink}
@@ -1650,7 +1650,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
       {reRequestTarget && (() => {
         const inv = reRequestTarget;
         const cl = clients.find(c => c.id === inv.clientId) || {};
-        const defaultMsg = `${cl.name || ""} 御中\n\nいつもお世話になっております。\n下記の請求につきまして、お支払い期日を過ぎておりますのでご確認をお願いいたします。\n\n対象請求: ${inv.docNo}\n未入金額: ¥${fmt(inv.total || 0)}\n\nお忙しいところ恐れ入りますが、ご確認のほどよろしくお願いいたします。`;
+        const defaultMsg = `${cl.name || ""} ${cl.honorific || "御中"}\n\nいつもお世話になっております。\n下記の請求につきまして、お支払い期日を過ぎておりますのでご確認をお願いいたします。\n\n対象請求: ${inv.docNo}\n未入金額: ¥${fmt(inv.total || 0)}\n\nお忙しいところ恐れ入りますが、ご確認のほどよろしくお願いいたします。`;
         if (!reRequestMsg) setTimeout(() => setReRequestMsg(defaultMsg), 0);
         const msg = reRequestMsg || defaultMsg;
         const needApproval = company?.reRequestApproval !== false;
@@ -2748,7 +2748,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
         const clOverdue = overdueInvoices.filter(i => i.clientId === cl.id);
         const overdueTotal = clOverdue.reduce((a, i) => a + (i.total || 0), 0);
         const docNos = clOverdue.map(i => i.docNo).join(", ");
-        const defaultMsg = `${cl.name} 御中\n\nいつもお世話になっております。\n下記の請求につきまして、お支払い期日を過ぎておりますのでご確認をお願いいたします。\n\n対象請求: ${docNos}\n未入金額: ¥${fmt(overdueTotal)}\n\nお忙しいところ恐れ入りますが、ご確認のほどよろしくお願いいたします。`;
+        const defaultMsg = `${cl.name} ${cl.honorific || "御中"}\n\nいつもお世話になっております。\n下記の請求につきまして、お支払い期日を過ぎておりますのでご確認をお願いいたします。\n\n対象請求: ${docNos}\n未入金額: ¥${fmt(overdueTotal)}\n\nお忙しいところ恐れ入りますが、ご確認のほどよろしくお願いいたします。`;
         if (!reRequestMsg) setTimeout(() => setReRequestMsg(defaultMsg), 0);
         const msg = reRequestMsg || defaultMsg;
         const needApproval = company?.reRequestApproval !== false;
@@ -3060,6 +3060,11 @@ function ClientsPage({ clients, divisions, isAdmin }) {
           <div style={{ ...s.row, marginBottom: 12 }}>
             <div style={s.col}><span style={s.label}>会社名 *</span><input style={s.input} value={form.name} onChange={e => setF("name",e.target.value)} /></div>
             <div style={s.col}><span style={s.label}>フリガナ</span><input style={s.input} value={form.kana} onChange={e => setF("kana",e.target.value)} /></div>
+            <div style={s.col}><span style={s.label}>敬称</span>
+              <select style={{...s.select,width:100}} value={form.honorific||"御中"} onChange={e => setF("honorific",e.target.value)}>
+                <option value="御中">御中</option><option value="様">様</option><option value="殿">殿</option><option value="">なし</option>
+              </select>
+            </div>
             <div style={s.col}><span style={s.label}>電話番号</span><input style={s.input} value={form.tel} onChange={e => setF("tel",e.target.value)} /></div>
             <div style={s.col}><span style={s.label}>メール1</span><input style={s.input} value={form.email} onChange={e => setF("email",e.target.value)} /></div>
             <div style={s.col}><span style={s.label}>メール2</span><input style={s.input} value={form.email2||""} onChange={e => setF("email2",e.target.value)} /></div>
@@ -3951,7 +3956,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
               to: emails,
               subject: `【請求書】${inv.docNo} ${coInfo.name || ""}`,
               html: `<div style="font-family:sans-serif;color:#333;">
-                <p>${cl.name || ""} 御中</p>
+                <p>${cl.name || ""} ${cl.honorific || "御中"}</p>
                 <p>いつもお世話になっております。<br>${coInfo.name || ""}です。</p>
                 <p>請求書（${inv.docNo}）をお送りいたします。</p>
                 <p>金額：&yen;${fmt(p.total)}</p>
@@ -4023,7 +4028,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
         if (p.type === "re-request-email" || p.type === "re-request-stripe") {
           // 再請求系（PDFリンク付き）
           const pdfLink = p.pdfUrl ? `<p style="margin:20px 0"><a href="${p.pdfUrl}" style="display:inline-block;padding:12px 24px;background:#1C2B4A;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold">📄 請求書PDFをダウンロード</a></p>` : "";
-          const msgHtml = (p.message || `${cl.name} 御中\n\nお支払い期日を過ぎておりますのでご確認をお願いいたします。\n\n対象: ${p.invoiceDocNo}\n金額: ¥${fmt(p.total)}`).replace(/\n/g, "<br/>");
+          const msgHtml = (p.message || `${cl.name} ${cl.honorific || "御中"}\n\nお支払い期日を過ぎておりますのでご確認をお願いいたします。\n\n対象: ${p.invoiceDocNo}\n金額: ¥${fmt(p.total)}`).replace(/\n/g, "<br/>");
           const htmlBody = msgHtml + pdfLink;
           await fetch("/api/send-invoice", {
             method: "POST", headers: { "Content-Type": "application/json" },
@@ -4046,7 +4051,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
               to: emails,
               subject: `【請求書】${p.invoiceDocNo} ${co.name || ""}`,
               html: `<div style="font-family:sans-serif;color:#333;">
-                <p>${cl.name} 御中</p>
+                <p>${cl.name} ${cl.honorific || "御中"}</p>
                 <p>いつもお世話になっております。<br>${co.name || ""}です。</p>
                 <p>請求書（${p.invoiceDocNo}）をお送りいたします。</p>
                 <p>金額：¥${fmt(p.total)}</p>

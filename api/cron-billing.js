@@ -148,7 +148,7 @@ async function createInvoiceAndProcess({ clientId, divisionId, items, deliveryRe
     const sent = await sendEmail(clientEmails,
       `【請求書】${docNo} ${co.name || ""}`,
       `<div style="font-family:sans-serif;color:#333;">
-        <p>${client.name || ""} 御中</p>
+        <p>${client.name || ""} ${client.honorific || "御中"}</p>
         <p>いつもお世話になっております。<br>${co.name || ""}です。</p>
         <p>請求書（${docNo}）をお送りいたします。</p>
         <p>金額：&yen;${total.toLocaleString()}</p>
@@ -350,7 +350,7 @@ export default async function handler(req, res) {
         const sent = await sendEmail(schEmails,
           `【請求書】${inv.docNo} ${co2.name || ""}`,
           `<div style="font-family:sans-serif;color:#333;">
-            <p>${client.name || ""} 御中</p>
+            <p>${client.name || ""} ${client.honorific || "御中"}</p>
             <p>いつもお世話になっております。<br>${co2.name || ""}です。</p>
             <p>請求書（${inv.docNo}）をお送りいたします。</p>
             <p>金額：&yen;${(inv.total || 0).toLocaleString()}</p>
