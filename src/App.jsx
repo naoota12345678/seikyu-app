@@ -3275,6 +3275,17 @@ function ProductsPage({ products, company, isAdmin }) {
   };
   const edit = (p) => { setForm({...p,price:String(p.price),taxRate:p.taxRate!==undefined?p.taxRate:10,category:p.category||""}); setEditing(p); setShowForm(true); };
   const del = async (id) => { if (confirm("削除しますか？")) await deleteDoc(doc(db,"products",id)); };
+  const [bulkEditMode, setBulkEditMode] = useState(null); // "category"|"taxRate"|"price"
+  const [bulkEditVal, setBulkEditVal] = useState("");
+  const bulkEdit = async () => {
+    if (!selected.size || !bulkEditMode) return;
+    const batch = writeBatch(db);
+    const val = bulkEditMode === "category" ? bulkEditVal : Number(bulkEditVal) || 0;
+    selected.forEach(id => batch.update(doc(db, "products", id), { [bulkEditMode]: val, updatedAt: serverTimestamp() }));
+    await batch.commit();
+    setBulkEditMode(null); setBulkEditVal(""); setSelected(new Set());
+    alert(`${selected.size}件の${bulkEditMode === "category" ? "カテゴリ" : bulkEditMode === "taxRate" ? "税率" : "単価"}を更新しました`);
+  };
   const bulkDel = async () => {
     if (!selected.size) return;
     if (!confirm(`${selected.size}件の商品を削除しますか？`)) return;
@@ -3399,10 +3410,27 @@ function ProductsPage({ products, company, isAdmin }) {
       </div>
       <div style={s.card}>
         {isAdmin && selected.size > 0 && (
-          <div style={{marginBottom:12,display:"flex",gap:12,alignItems:"center"}}>
-            <span style={{fontSize:13,fontWeight:700,color:C.navy}}>{selected.size}件選択中</span>
-            <button style={{...s.btn("red"),padding:"4px 12px",fontSize:12}} onClick={bulkDel}>一括削除</button>
-            <button style={{...s.btn("light"),padding:"4px 12px",fontSize:12}} onClick={()=>setSelected(new Set())}>選択解除</button>
+          <div style={{marginBottom:12}}>
+            <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:8}}>
+              <span style={{fontSize:13,fontWeight:700,color:C.navy}}>{selected.size}件選択中</span>
+              <button style={{...s.btn("gold"),padding:"4px 12px",fontSize:12}} onClick={()=>{setBulkEditMode("category");setBulkEditVal("");}}>カテゴリ一括変更</button>
+              <button style={{...s.btn("gold"),padding:"4px 12px",fontSize:12}} onClick={()=>{setBulkEditMode("taxRate");setBulkEditVal("");}}>税率一括変更</button>
+              <button style={{...s.btn("gold"),padding:"4px 12px",fontSize:12}} onClick={()=>{setBulkEditMode("price");setBulkEditVal("");}}>単価一括変更</button>
+              <button style={{...s.btn("red"),padding:"4px 12px",fontSize:12}} onClick={bulkDel}>一括削除</button>
+              <button style={{...s.btn("light"),padding:"4px 12px",fontSize:12}} onClick={()=>setSelected(new Set())}>選択解除</button>
+            </div>
+            {bulkEditMode && (
+              <div style={{display:"flex",gap:8,alignItems:"center",padding:"8px 12px",background:C.pale,borderRadius:8}}>
+                <span style={{fontSize:13}}>{bulkEditMode==="category"?"カテゴリ":bulkEditMode==="taxRate"?"税率（%）":"標準単価"}：</span>
+                {bulkEditMode==="category" ? (
+                  <input style={{...s.input,width:160}} value={bulkEditVal} onChange={e=>setBulkEditVal(e.target.value)} placeholder="カテゴリ名" list="cat-list" />
+                ) : (
+                  <input style={{...s.input,width:120}} type="number" value={bulkEditVal} onChange={e=>setBulkEditVal(e.target.value)} />
+                )}
+                <button style={{...s.btn("primary"),padding:"4px 12px",fontSize:12}} onClick={bulkEdit}>適用</button>
+                <button style={{...s.btn("light"),padding:"4px 12px",fontSize:12}} onClick={()=>setBulkEditMode(null)}>キャンセル</button>
+              </div>
+            )}
           </div>
         )}
         <table style={s.table}>
@@ -3460,6 +3488,16 @@ function ClientPricesPage({ clients, products, clientPrices, isAdmin }) {
   };
 
   const del = async (id) => { if (confirm("削除しますか？")) await deleteDoc(doc(db, "clientPrices", id)); };
+  const [bulkPrice, setBulkPrice] = useState("");
+  const [showBulkPrice, setShowBulkPrice] = useState(false);
+  const bulkEditPrice = async () => {
+    if (!selected.size || bulkPrice === "") return;
+    const batch = writeBatch(db);
+    selected.forEach(id => batch.update(doc(db, "clientPrices", id), { price: Number(bulkPrice) || 0, updatedAt: serverTimestamp() }));
+    await batch.commit();
+    setShowBulkPrice(false); setBulkPrice(""); setSelected(new Set());
+    alert(`${selected.size}件の単価を更新しました`);
+  };
   const bulkDel = async () => {
     if (!selected.size) return;
     if (!confirm(`${selected.size}件の取引先別単価を削除しますか？`)) return;
@@ -3605,10 +3643,21 @@ function ClientPricesPage({ clients, products, clientPrices, isAdmin }) {
       )}
       <div style={s.card}>
         {isAdmin && selected.size > 0 && (
-          <div style={{marginBottom:12,display:"flex",gap:12,alignItems:"center"}}>
-            <span style={{fontSize:13,fontWeight:700,color:C.navy}}>{selected.size}件選択中</span>
-            <button style={{...s.btn("red"),padding:"4px 12px",fontSize:12}} onClick={bulkDel}>一括削除</button>
-            <button style={{...s.btn("light"),padding:"4px 12px",fontSize:12}} onClick={()=>setSelected(new Set())}>選択解除</button>
+          <div style={{marginBottom:12}}>
+            <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:8}}>
+              <span style={{fontSize:13,fontWeight:700,color:C.navy}}>{selected.size}件選択中</span>
+              <button style={{...s.btn("gold"),padding:"4px 12px",fontSize:12}} onClick={()=>{setShowBulkPrice(true);setBulkPrice("");}}>単価一括変更</button>
+              <button style={{...s.btn("red"),padding:"4px 12px",fontSize:12}} onClick={bulkDel}>一括削除</button>
+              <button style={{...s.btn("light"),padding:"4px 12px",fontSize:12}} onClick={()=>setSelected(new Set())}>選択解除</button>
+            </div>
+            {showBulkPrice && (
+              <div style={{display:"flex",gap:8,alignItems:"center",padding:"8px 12px",background:C.pale,borderRadius:8}}>
+                <span style={{fontSize:13}}>新しい単価：</span>
+                <input style={{...s.input,width:140}} type="number" value={bulkPrice} onChange={e=>setBulkPrice(e.target.value)} placeholder="金額" />
+                <button style={{...s.btn("primary"),padding:"4px 12px",fontSize:12}} onClick={bulkEditPrice}>適用</button>
+                <button style={{...s.btn("light"),padding:"4px 12px",fontSize:12}} onClick={()=>setShowBulkPrice(false)}>キャンセル</button>
+              </div>
+            )}
           </div>
         )}
         <table style={s.table}>
