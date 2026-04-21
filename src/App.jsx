@@ -3,7 +3,7 @@ import { db, storage, auth } from "./firebase";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import {
   collection, addDoc, getDocs, getDoc, doc, updateDoc, deleteDoc,
-  onSnapshot, query, orderBy, serverTimestamp, writeBatch, setDoc
+  onSnapshot, query, orderBy, where, serverTimestamp, writeBatch, setDoc
 } from "firebase/firestore";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
@@ -1078,7 +1078,17 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
     const cn = clients.find(c => c.id === d.clientId)?.name || "";
     return cn.includes(search) || (d.docNo || "").includes(search);
   });
-  const deleteD = async (id) => { if (confirm("削除しますか？")) await deleteDoc(doc(db, "deliveries", id)); };
+  const deleteD = async (id) => {
+    if (!confirm("削除しますか？")) return;
+    await deleteDoc(doc(db, "deliveries", id));
+    // 関連する承認待ち（pendingBillings）を削除
+    const pbSnap = await getDocs(query(collection(db, "pendingBillings"), where("status", "==", "pending")));
+    for (const pbDoc of pbSnap.docs) {
+      const d = pbDoc.data();
+      const delIds = d.deliveryIds ? (Array.isArray(d.deliveryIds) ? d.deliveryIds : [d.deliveryIds]) : (d.deliveryId ? [d.deliveryId] : []);
+      if (delIds.includes(id)) await deleteDoc(pbDoc.ref);
+    }
+  };
   const issueInvoice = async (d) => {
     const cl = clients.find(c => c.id === d.clientId);
     if (!confirm(`${cl?.name || "—"} の請求書（¥${fmt(d.total)}）を発行しますか？${company?.invoiceApproval ? "\n承認後に発行・送信されます。" : "\n次回のcron実行時に自動送信されます。"}`)) return;
@@ -1509,7 +1519,17 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
     return cn.includes(search) || (i.docNo || "").includes(search);
   });
   const totalBal = Object.values(balances).reduce((a, b) => a + (b.currentBalance || 0), 0);
-  const del = async (id) => { if (confirm("削除しますか？")) await deleteDoc(doc(db, "invoices", id)); };
+  const del = async (id) => {
+    if (!confirm("削除しますか？")) return;
+    await deleteDoc(doc(db, "invoices", id));
+    // 関連する承認待ち（再請求系）を削除
+    const pbSnap = await getDocs(query(collection(db, "pendingBillings"), where("status", "==", "pending")));
+    for (const pbDoc of pbSnap.docs) {
+      const d = pbDoc.data();
+      const invIds = d.invoiceIds || (d.invoiceId ? [d.invoiceId] : []);
+      if (invIds.includes(id)) await deleteDoc(pbDoc.ref);
+    }
+  };
   return (
     <div>
       <div style={s.pageTitle}>請求書一覧</div>
