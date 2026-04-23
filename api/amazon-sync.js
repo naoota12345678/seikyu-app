@@ -134,10 +134,11 @@ export default async function handler(req, res) {
         endDate = todayJST;
       }
     } else {
+      // cron: 過去30日分（返品・キャンセル反映のため）
       const d = new Date(nowJST);
-      d.setDate(d.getDate() - 1);
+      d.setDate(d.getDate() - 30);
       startDate = d.toISOString().split("T")[0];
-      endDate = startDate;
+      endDate = todayJST;
     }
 
     const metrics = await getOrderMetrics(accessToken, startDate, endDate);

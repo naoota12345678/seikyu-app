@@ -7,7 +7,11 @@ if (!getApps().length) {
 }
 const db = getFirestore();
 
-const todayStr = () => new Date().toISOString().split("T")[0];
+// JST基準の今日
+function todayJST() {
+  const d = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  return d.toISOString().split("T")[0];
+}
 
 function toJST(date) {
   const d = new Date(date);
@@ -179,6 +183,10 @@ export default async function handler(req, res) {
 
     let startDate, endDate;
 
+    // JST基準で日付を算出
+    const nowJST = new Date(Date.now() + 9 * 60 * 60 * 1000);
+    const todayStr = nowJST.toISOString().split("T")[0];
+
     if (req.method === "POST") {
       const { mode, start, end } = req.body || {};
       if (mode === "range" && start && end) {
@@ -187,15 +195,15 @@ export default async function handler(req, res) {
         endDate = end;
       } else {
         // 通常: 今日分
-        startDate = todayStr();
-        endDate = todayStr();
+        startDate = todayStr;
+        endDate = todayStr;
       }
     } else {
-      // cron: 前日分
-      const d = new Date();
-      d.setDate(d.getDate() - 1);
+      // cron: 過去30日分（返品・キャンセル反映のため）
+      const d = new Date(nowJST);
+      d.setDate(d.getDate() - 30);
       startDate = d.toISOString().split("T")[0];
-      endDate = startDate;
+      endDate = todayStr;
     }
 
     const ranges = splitDateRange(startDate, endDate);
