@@ -694,7 +694,7 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
       // 即時請求 + 自動発行ONなら請求書を自動作成
       if (autoInv) {
         const inv = {
-          docNo: genDocNo("INV", invoices), clientId: form.clientId, date: today(),
+          docNo: genDocNo("INV", invoices), clientId: form.clientId, date: form.date,
           dueDate: nextMonthEnd(form.date), billingType: "immediate",
           items: form.items, subtotal: sub, tax, total: grandTotal,
           deliveryRef: data.docNo, deliveryRefs: [data.docNo],
@@ -1210,7 +1210,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
       const d = unissued[i];
       const inv = {
         docNo: `INV-${ym}-${String(existingCount + i + 1).padStart(3, "0")}`,
-        clientId: d.clientId, date: today(),
+        clientId: d.clientId, date: d.date,
         dueDate: nextMonthEnd(d.date), billingType: "immediate",
         deliveryRef: d.docNo, deliveryRefs: [d.docNo],
         items: d.items, subtotal: d.subtotal, tax: d.tax, total: d.total,
@@ -1250,7 +1250,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
       return;
     }
     const inv = {
-      docNo: genDocNo("INV", invoices), clientId: d.clientId, date: today(),
+      docNo: genDocNo("INV", invoices), clientId: d.clientId, date: d.date,
       dueDate: nextMonthEnd(d.date), billingType: "immediate",
       deliveryRef: d.docNo, deliveryRefs: [d.docNo],
       items: d.items, subtotal: d.subtotal, tax: d.tax, total: d.total,
@@ -1264,8 +1264,8 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
       currentBalance: (bal.currentBalance || 0) + d.total,
       paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
     });
-    // 即送信（sendModeがmanual以外かつメールあり）
-    if (getEmails(cl).length && cl?.sendMode !== "manual") {
+    // 即送信（sendMode=autoかつメールあり）
+    if (getEmails(cl).length && cl?.sendMode === "auto") {
       try {
         let coInfo = company || {};
         if (cl.divisionId) {
