@@ -1,13 +1,12 @@
-const admin = require("firebase-admin");
+import { initializeApp, cert, getApps } from "firebase-admin/app";
+import { getFirestore } from "firebase-admin/firestore";
 
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)),
-  });
+if (!getApps().length) {
+  initializeApp({ credential: cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)) });
 }
-const db = admin.firestore();
+const db = getFirestore();
 
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
 
   try {
@@ -36,4 +35,4 @@ module.exports = async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
-};
+}
