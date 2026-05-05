@@ -1193,9 +1193,14 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
     setSelected(new Set());
   };
   const bulkIssueInvoice = async () => {
-    const unissued = [...selected].map(id => deliveries.find(d => d.id === id)).filter(d => d && d.status === "unissued");
-    if (!unissued.length) return alert("未請求の納品書が選択されていません");
-    if (!confirm(`${unissued.length}件の未請求納品書から請求書を一括発行しますか？\n※ メール送信はされません。請求書一覧から個別に送信してください。`)) return;
+    const all = [...selected].map(id => deliveries.find(d => d.id === id)).filter(Boolean);
+    const unissued = all.filter(d => d.status === "unissued");
+    const skipped = all.length - unissued.length;
+    if (!unissued.length) return alert("未請求の納品書が選択されていません（請求済 " + skipped + "件はスキップ）");
+    const msg = `未請求 ${unissued.length}件の請求書を一括発行します。` +
+      (skipped > 0 ? `\n（請求済 ${skipped}件はスキップされます）` : "") +
+      `\n\n※ メール送信はされません。請求書一覧から個別に送信してください。`;
+    if (!confirm(msg)) return;
     const now = new Date();
     const ym = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
     const existingCount = invoices.filter(i => (i.docNo || "").includes(`INV-${ym}`)).length;
