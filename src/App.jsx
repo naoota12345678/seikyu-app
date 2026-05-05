@@ -684,7 +684,7 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
     if (!form.items.some(i => i.name)) return alert("品目を入力してください");
     const cl = clients.find(c => c.id === form.clientId);
     const isImmediate = cl && cl.billingType !== "closing" && cl.billingType !== "monthly";
-    const autoInv = isImmediate && !editing && company?.immediateAutoInvoice;
+    const autoInv = isImmediate && !editing;
     const data = { ...form, docNo: editing?.docNo || genDocNo("NO", deliveries), status: editing?.status || (autoInv ? "invoiced" : "unissued"), subtotal: sub, tax, total: grandTotal, updatedAt: serverTimestamp() };
     if (editing) {
       await updateDoc(doc(db, "deliveries", editing.id), data);
@@ -4584,13 +4584,6 @@ function SettingsPage({ company, setCompany, isAdmin, currentUser }) {
               <span style={{ fontSize: 13 }}>再請求時に承認を必要とする</span>
             </label>
             <div style={{ fontSize: 11, color: C.gray, marginTop: 4 }}>OFFにすると、残高管理から直接メール/Stripe請求を送信します</div>
-          </div>
-          <div style={s.col}>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-              <input type="checkbox" checked={form.immediateAutoInvoice === true} onChange={e => setF("immediateAutoInvoice", e.target.checked)} />
-              <span style={{ fontSize: 13 }}>即時請求は納品書作成時に自動で請求書発行する</span>
-            </label>
-            <div style={{ fontSize: 11, color: C.gray, marginTop: 4 }}>ONにすると、即時請求の取引先は納品書保存と同時に請求書が発行されます（承認不要）</div>
           </div>
         </div>
       </div>
