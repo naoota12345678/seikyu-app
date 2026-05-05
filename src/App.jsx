@@ -1192,6 +1192,42 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
     await batch.commit();
     setSelected(new Set());
   };
+  const bulkIssueInvoice = async () => {
+    const unissued = [...selected].map(id => deliveries.find(d => d.id === id)).filter(d => d && d.status === "unissued");
+    if (!unissued.length) return alert("未請求の納品書が選択されていません");
+    if (!confirm(`${unissued.length}件の未請求納品書から請求書を一括発行しますか？\n※ メール送信はされません。請求書一覧から個別に送信してください。`)) return;
+    const now = new Date();
+    const ym = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const existingCount = invoices.filter(i => (i.docNo || "").includes(`INV-${ym}`)).length;
+    let count = 0;
+    const balUpdates = {};
+    for (let i = 0; i < unissued.length; i++) {
+      const d = unissued[i];
+      const inv = {
+        docNo: `INV-${ym}-${String(existingCount + i + 1).padStart(3, "0")}`,
+        clientId: d.clientId, date: today(),
+        dueDate: nextMonthEnd(d.date), billingType: "immediate",
+        deliveryRef: d.docNo, deliveryRefs: [d.docNo],
+        items: d.items, subtotal: d.subtotal, tax: d.tax, total: d.total,
+        status: "unpaid", createdAt: serverTimestamp(),
+      };
+      const invRef = await addDoc(collection(db, "invoices"), inv);
+      await updateDoc(doc(db, "deliveries", d.id), { status: "invoiced", invoiceId: invRef.id });
+      if (!balUpdates[d.clientId]) balUpdates[d.clientId] = 0;
+      balUpdates[d.clientId] += (d.total || 0);
+      count++;
+    }
+    for (const [clientId, addAmount] of Object.entries(balUpdates)) {
+      const bal = balances[clientId] || {};
+      await setDoc(doc(db, "clientBalances", clientId), {
+        clientId, prevBalance: bal.currentBalance || 0,
+        currentBalance: (bal.currentBalance || 0) + addAmount,
+        paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
+      });
+    }
+    setSelected(new Set());
+    alert(`${count}件の請求書を発行しました`);
+  };
   const issueInvoice = async (d) => {
     const cl = clients.find(c => c.id === d.clientId);
     if (!confirm(`${cl?.name || "—"} の請求書（¥${fmt(d.total)}）を発行しますか？${company?.invoiceApproval ? "\n承認後に発行・送信されます。" : "\n次回のcron実行時に自動送信されます。"}`)) return;
@@ -1283,6 +1319,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
         {isAdmin && selected.size > 0 && (
           <div style={{marginBottom:12,display:"flex",gap:12,alignItems:"center"}}>
             <span style={{fontSize:13,fontWeight:700,color:C.navy}}>{selected.size}件選択中</span>
+            <button style={{...s.btn("gold"),padding:"4px 12px",fontSize:12}} onClick={bulkIssueInvoice}>一括請求書発行</button>
             <button style={{...s.btn("red"),padding:"4px 12px",fontSize:12}} onClick={bulkDelD}>一括削除</button>
             <button style={{...s.btn("light"),padding:"4px 12px",fontSize:12}} onClick={()=>setSelected(new Set())}>選択解除</button>
           </div>
