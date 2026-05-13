@@ -223,8 +223,9 @@ function footerHTML(items, bank) {
 }
 
 function coBlock(c,doc_,showReg){
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
   return `<div class="co"><strong>${c.name||""}</strong><br>${c.address||""}<br>TEL ${c.tel||""}　FAX ${c.fax||""}<br>${showReg&&c.registrationNo?`登録番号　${c.registrationNo}`:""}
-  <img class="kakuin" src="/kakuin.png" />
+  <img class="kakuin" src="${origin}/kakuin.png" />
   <div class="stamp-area"><div class="stamp-box"></div><div class="stamp-box"></div></div></div>`;
 }
 
