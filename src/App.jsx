@@ -656,7 +656,7 @@ function ProductPicker({ products, onSelect, onClose }) {
 // ── Item Row ──────────────────────────────────────────────────────────────────
 function ItemRow({ item, idx, onChange, onRemove, onPickProduct, products, clientPrices, clientId }) {
   const rate = item.taxRate !== undefined && item.taxRate !== null && item.taxRate !== "" ? Number(item.taxRate) : 10;
-  const [suggest, setSuggest] = useState(null);
+  const [suggest, setSuggest] = useState(false);
   const q = item.name || "";
   const suggestions = q.length >= 1 && suggest !== false ? (products || []).filter(p => (p.name||"").includes(q) || String(p.code||"").includes(q)).sort((a, b) => String(a.code||"").localeCompare(String(b.code||""), "ja", {numeric:true})).slice(0, 8) : [];
   const pickSuggest = (p) => {
