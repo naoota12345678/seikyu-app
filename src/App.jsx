@@ -182,7 +182,7 @@ h1{text-align:center;font-size:20px;letter-spacing:6px;margin:0 0 20px;padding:4
 .hd{display:flex;justify-content:space-between;margin-bottom:16px}
 .cn{font-size:15px;font-weight:bold;border-bottom:2px solid #1C2B4A;padding-bottom:3px;display:inline-block}
 .co{text-align:right;font-size:11px;line-height:1.9;position:relative}
-.kakuin{position:absolute;right:-50px;top:-80px;width:160px;height:160px;opacity:0.7;pointer-events:none}
+.kakuin{position:absolute;right:-50px;top:-60px;width:160px;height:160px;opacity:0.7;pointer-events:none}
 .stamp-area{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
 .stamp-box{width:42px;height:42px;border:1.5px solid #333}
 .meta{font-size:11px;margin-top:10px;line-height:1.8}
