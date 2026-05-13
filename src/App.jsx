@@ -1161,13 +1161,14 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
   const [editing, setEditing] = useState(null);
   const [printTarget, setPrintTarget] = useState(null);
   const [selected, setSelected] = useState(new Set());
+  const [sortOrder, setSortOrder] = useState("desc"); // desc=新しい順, asc=古い順
   const filtered = deliveries.filter(d => {
     const cn = clients.find(c => c.id === d.clientId)?.name || "";
     if (!(cn.includes(search) || (d.docNo || "").includes(search))) return false;
     if (dateFrom && d.date < dateFrom) return false;
     if (dateTo && d.date > dateTo) return false;
     return true;
-  });
+  }).sort((a, b) => sortOrder === "desc" ? (b.date || "").localeCompare(a.date || "") : (a.date || "").localeCompare(b.date || ""));
   const deleteDSingle = async (id) => {
     const del = deliveries.find(d => d.id === id);
     await deleteDoc(doc(db, "deliveries", id));
@@ -1346,7 +1347,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
           </div>
         )}
         <table style={s.table}>
-          <thead><tr>{isAdmin && <th style={s.th}><input type="checkbox" onChange={e=>setSelected(e.target.checked?new Set(filtered.map(d=>d.id)):new Set())} checked={filtered.length>0&&filtered.every(d=>selected.has(d.id))}/></th>}<th style={s.th}>伝票番号</th><th style={s.th}>日付</th><th style={s.th}>取引先</th><th style={s.th}>金額</th><th style={s.th}>状態</th><th style={s.th}>操作</th></tr></thead>
+          <thead><tr>{isAdmin && <th style={s.th}><input type="checkbox" onChange={e=>setSelected(e.target.checked?new Set(filtered.map(d=>d.id)):new Set())} checked={filtered.length>0&&filtered.every(d=>selected.has(d.id))}/></th>}<th style={s.th}>伝票番号</th><th style={{ ...s.th, cursor: "pointer", userSelect: "none" }} onClick={() => setSortOrder(o => o === "desc" ? "asc" : "desc")}>日付 {sortOrder === "desc" ? "▼" : "▲"}</th><th style={s.th}>取引先</th><th style={s.th}>金額</th><th style={s.th}>状態</th><th style={s.th}>操作</th></tr></thead>
           <tbody>
             {filtered.map(d => {
               const client = clients.find(c => c.id === d.clientId);
