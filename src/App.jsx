@@ -2511,7 +2511,8 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
           <div style={{ fontSize: 28, fontWeight: 700, color: C.gold }}>¥{fmt(curGrand)}</div>
         </div>
         {[
-          { label: "請求書", value: "¥" + fmt(currentData?.invTotal || 0), color: C.navy },
+          { label: "卸", value: "¥" + fmt(mInvs.filter(i => !clients.find(c => c.id === i.clientId)?.isEvent).reduce((a, i) => a + (i.total || 0), 0)), color: C.navy },
+          { label: "イベント", value: "¥" + fmt(mInvs.filter(i => clients.find(c => c.id === i.clientId)?.isEvent).reduce((a, i) => a + (i.total || 0), 0)), color: "#E67E22" },
           ...sources.map(src => ({ label: sourceLabel(src), value: "¥" + fmt(currentData?.ext?.[src]?.amount || 0), color: C.green })),
         ].map(st => (
           <div key={st.label} style={{ ...s.card, flex: "1 1 120px", textAlign: "center", margin: 0 }}>
@@ -3336,6 +3337,11 @@ function ClientsPage({ clients, divisions, isAdmin }) {
                   <input type="checkbox" checked={form.isOneTime} onChange={e => setF("isOneTime",e.target.checked)} />単発フラグ
                 </label>
               </div>
+              <div style={s.col}><span style={s.label}>売上カテゴリ</span>
+                <label style={{ display:"flex",alignItems:"center",gap:6,padding:"8px 0" }}>
+                  <input type="checkbox" checked={form.isEvent||false} onChange={e => setF("isEvent",e.target.checked)} />イベント
+                </label>
+              </div>
             </div>
             <div style={{ ...s.row, justifyContent: "flex-end", gap: 8 }}>
               <button style={s.btn("light")} onClick={() => setShowForm(false)}>キャンセル</button>
@@ -3367,7 +3373,7 @@ function ClientsPage({ clients, divisions, isAdmin }) {
                 <td style={s.td}>{div ? <span style={s.badge("blue")}>{div.name}</span> : "—"}</td>
                 <td style={s.td}>{c.tel}</td>
                 <td style={s.td}><span style={s.badge(c.billingType==="closing"||c.billingType==="monthly"?"gold":"blue")}>{c.billingType==="closing"?closingDaysLabel(c.closingDays):c.billingType==="monthly"?"月末締め":"即時"}</span></td>
-                <td style={s.td}>{c.isOneTime&&<span style={s.badge("light")}>単発</span>}</td>
+                <td style={s.td}>{c.isOneTime&&<span style={s.badge("light")}>単発</span>}{c.isEvent&&<span style={s.badge("gold")}>イベント</span>}</td>
                 <td style={s.td}>
                   <div style={{display:"flex",gap:6}}>
                     <button style={{...s.btn("light"),padding:"4px 10px",fontSize:12}} onClick={()=>edit(c)}>編集</button>
