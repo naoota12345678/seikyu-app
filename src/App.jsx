@@ -654,15 +654,35 @@ function ProductPicker({ products, onSelect, onClose }) {
 }
 
 // ── Item Row ──────────────────────────────────────────────────────────────────
-function ItemRow({ item, idx, onChange, onRemove, onPickProduct }) {
+function ItemRow({ item, idx, onChange, onRemove, onPickProduct, products, clientPrices, clientId }) {
   const rate = item.taxRate !== undefined && item.taxRate !== null && item.taxRate !== "" ? Number(item.taxRate) : 10;
+  const [suggest, setSuggest] = useState(null);
+  const q = item.name || "";
+  const suggestions = q.length >= 1 && suggest !== false ? (products || []).filter(p => (p.name||"").includes(q) || String(p.code||"").includes(q)).slice(0, 8) : [];
+  const pickSuggest = (p) => {
+    const cp = clientPrices?.find(cp => cp.clientId === clientId && cp.productId === p.id);
+    const price = cp ? cp.price : (p.price || 0);
+    onChange(idx, "name", p.name); onChange(idx, "unit", p.unit || ""); onChange(idx, "price", price); onChange(idx, "taxRate", p.taxRate !== undefined ? p.taxRate : 10);
+    setSuggest(false);
+  };
   return (
     <tr>
-      <td style={s.td}>
+      <td style={{ ...s.td, position: "relative" }}>
         <div style={{ display: "flex", gap: 4 }}>
-          <input style={{ ...s.input, flex: 1, minWidth: 160 }} value={item.name} onChange={e => onChange(idx, "name", e.target.value)} placeholder="品名" />
+          <input style={{ ...s.input, flex: 1, minWidth: 160 }} value={item.name} onChange={e => { onChange(idx, "name", e.target.value); setSuggest(null); }} onFocus={() => setSuggest(null)} placeholder="品名・コードで検索" />
           <button style={{ ...s.btn("light"), padding: "6px 10px", fontSize: 12 }} onClick={() => onPickProduct(idx)}>📦</button>
         </div>
+        {suggestions.length > 0 && suggest !== false && (
+          <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 6, boxShadow: "0 4px 12px rgba(0,0,0,0.15)", zIndex: 100, maxHeight: 200, overflowY: "auto" }}>
+            {suggestions.map(p => (
+              <div key={p.id} style={{ padding: "6px 10px", cursor: "pointer", fontSize: 12, borderBottom: `1px solid ${C.light}` }}
+                onMouseDown={e => e.preventDefault()} onClick={() => pickSuggest(p)}>
+                <span style={{ fontWeight: 600 }}>{p.name}</span>
+                <span style={{ color: C.gray, marginLeft: 8 }}>{p.code ? `[${p.code}]` : ""} ¥{fmt(p.price)}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </td>
       <td style={s.td}><input style={{ ...s.input, width: 70 }} type="number" value={item.qty} onChange={e => onChange(idx, "qty", e.target.value)} /></td>
       <td style={s.td}><input style={{ ...s.input, width: 60 }} value={item.unit} onChange={e => onChange(idx, "unit", e.target.value)} placeholder="袋" /></td>
@@ -790,7 +810,7 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
         </div>
         <table style={s.table}>
           <thead><tr><th style={s.th}>品名</th><th style={s.th}>数量</th><th style={s.th}>単位</th><th style={s.th}>単価</th><th style={s.th}>税率</th><th style={s.th}>金額</th><th style={s.th}></th></tr></thead>
-          <tbody>{form.items.map((it, idx) => <ItemRow key={idx} item={it} idx={idx} onChange={setItem} onRemove={remItem} onPickProduct={setPickerIdx} />)}</tbody>
+          <tbody>{form.items.map((it, idx) => <ItemRow key={idx} item={it} idx={idx} onChange={setItem} onRemove={remItem} onPickProduct={setPickerIdx} products={products} clientPrices={clientPrices} clientId={form.clientId} />)}</tbody>
         </table>
         <button style={{ ...s.btn("light"), marginBottom: 16 }} onClick={addItem}>＋ 行を追加</button>
         <div style={{ textAlign: "right", marginBottom: 16 }}>
@@ -864,7 +884,7 @@ function QuotationForm({ clients, products, quotations, clientPrices, divisions,
         </div>
         <table style={s.table}>
           <thead><tr><th style={s.th}>品名</th><th style={s.th}>数量</th><th style={s.th}>単位</th><th style={s.th}>単価</th><th style={s.th}>税率</th><th style={s.th}>金額</th><th style={s.th}></th></tr></thead>
-          <tbody>{form.items.map((it, idx) => <ItemRow key={idx} item={it} idx={idx} onChange={setItem} onRemove={remItem} onPickProduct={setPickerIdx} />)}</tbody>
+          <tbody>{form.items.map((it, idx) => <ItemRow key={idx} item={it} idx={idx} onChange={setItem} onRemove={remItem} onPickProduct={setPickerIdx} products={products} clientPrices={clientPrices} clientId={form.clientId} />)}</tbody>
         </table>
         <button style={{ ...s.btn("light"), marginBottom: 16 }} onClick={addItem}>＋ 行を追加</button>
         <div style={{ textAlign: "right", marginBottom: 16 }}>
