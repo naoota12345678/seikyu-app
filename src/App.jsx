@@ -2132,6 +2132,180 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
   );
 }
 
+// ── Sales Report Page ─────────────────────────────────────────────────────────
+function SalesReportPage({ clients, invoices, externalSales }) {
+  const [monthFrom, setMonthFrom] = useState(today().slice(0, 7));
+  const [monthTo, setMonthTo] = useState(today().slice(0, 7));
+
+  // 期間内の月リストを生成
+  const getMonthsInRange = (from, to) => {
+    const ms = [];
+    let d = new Date(from + "-01");
+    const end = new Date(to + "-01");
+    while (d <= end) {
+      ms.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
+      d.setMonth(d.getMonth() + 1);
+    }
+    return ms;
+  };
+  const months = getMonthsInRange(monthFrom, monthTo);
+  const periodLabel = monthFrom === monthTo ? monthFrom : `${monthFrom} ～ ${monthTo}`;
+
+  // 期間内の請求書
+  const periodInvs = invoices.filter(i => {
+    const m = (i.date || "").slice(0, 7);
+    return months.includes(m);
+  });
+
+  // 期間内の外部売上
+  const periodExt = externalSales.filter(e => {
+    const m = (e.date || "").slice(0, 7);
+    return months.includes(m);
+  });
+
+  // EC売上（ソース別）
+  const ecSources = [...new Set(periodExt.map(e => e.source))].sort();
+  const sourceLabel = (src) => src === "rakuten" ? "楽天" : src === "amazon" ? "Amazon" : src === "colorme" ? "カラーミー" : src;
+  const ecRows = ecSources.map(src => {
+    const items = periodExt.filter(e => e.source === src);
+    return { name: sourceLabel(src), amount: items.reduce((a, e) => a + (e.totalAmount || 0), 0), count: items.reduce((a, e) => a + (e.orderCount || 0), 0) };
+  });
+  const ecTotal = ecRows.reduce((a, r) => a + r.amount, 0);
+  const ecCount = ecRows.reduce((a, r) => a + r.count, 0);
+
+  // 卸（isEvent でない取引先）
+  const wholesaleInvs = periodInvs.filter(i => !clients.find(c => c.id === i.clientId)?.isEvent);
+  const wholesaleByClient = {};
+  wholesaleInvs.forEach(i => {
+    const cid = i.clientId;
+    if (!wholesaleByClient[cid]) wholesaleByClient[cid] = { amount: 0, count: 0 };
+    wholesaleByClient[cid].amount += (i.total || 0);
+    wholesaleByClient[cid].count++;
+  });
+  const wholesaleRows = Object.entries(wholesaleByClient).map(([cid, d]) => ({
+    name: clients.find(c => c.id === cid)?.name || "—", ...d
+  })).sort((a, b) => b.amount - a.amount);
+  const wholesaleTotal = wholesaleRows.reduce((a, r) => a + r.amount, 0);
+  const wholesaleCount = wholesaleRows.reduce((a, r) => a + r.count, 0);
+
+  // イベント（isEvent な取引先）
+  const eventInvs = periodInvs.filter(i => clients.find(c => c.id === i.clientId)?.isEvent);
+  const eventByClient = {};
+  eventInvs.forEach(i => {
+    const cid = i.clientId;
+    if (!eventByClient[cid]) eventByClient[cid] = { amount: 0, count: 0 };
+    eventByClient[cid].amount += (i.total || 0);
+    eventByClient[cid].count++;
+  });
+  const eventRows = Object.entries(eventByClient).map(([cid, d]) => ({
+    name: clients.find(c => c.id === cid)?.name || "—", ...d
+  })).sort((a, b) => b.amount - a.amount);
+  const eventTotal = eventRows.reduce((a, r) => a + r.amount, 0);
+  const eventCount = eventRows.reduce((a, r) => a + r.count, 0);
+
+  // その他（CSV等の外部売上で EC以外があれば）
+  const otherExt = periodExt.filter(e => e.source === "csv" || e.source === "other");
+  const otherTotal = otherExt.reduce((a, e) => a + (e.totalAmount || 0), 0);
+  const otherCount = otherExt.reduce((a, e) => a + (e.orderCount || 0), 0);
+
+  const grandTotal = ecTotal + wholesaleTotal + eventTotal + otherTotal;
+  const grandCount = ecCount + wholesaleCount + eventCount + otherCount;
+
+  const printReport = () => {
+    const row = (name, amount, count, bold, indent) =>
+      `<tr${bold ? ' style="font-weight:bold;background:#f4f1ec"' : ''}>
+        <td style="padding:6px 10px;border:1px solid #ccc;${indent ? 'padding-left:28px' : ''}">${name}</td>
+        <td style="padding:6px 10px;border:1px solid #ccc;text-align:right">¥${fmt(amount)}</td>
+        <td style="padding:6px 10px;border:1px solid #ccc;text-align:right">${count}件</td>
+      </tr>`;
+    const catHeader = (name) =>
+      `<tr><td colspan="3" style="padding:8px 10px;border:1px solid #ccc;font-weight:bold;background:#1C2B4A;color:#fff">${name}</td></tr>`;
+
+    let rows = "";
+    if (ecRows.length) {
+      rows += catHeader("EC売上");
+      ecRows.forEach(r => rows += row(r.name, r.amount, r.count, false, true));
+      rows += row("EC小計", ecTotal, ecCount, true, false);
+    }
+    if (wholesaleRows.length) {
+      rows += catHeader("卸");
+      wholesaleRows.forEach(r => rows += row(r.name, r.amount, r.count, false, true));
+      rows += row("卸小計", wholesaleTotal, wholesaleCount, true, false);
+    }
+    if (eventRows.length) {
+      rows += catHeader("イベント");
+      eventRows.forEach(r => rows += row(r.name, r.amount, r.count, false, true));
+      rows += row("イベント小計", eventTotal, eventCount, true, false);
+    }
+    if (otherTotal > 0) {
+      rows += catHeader("その他");
+      rows += row("その他", otherTotal, otherCount, true, true);
+    }
+    rows += `<tr style="font-weight:bold;font-size:14px;background:#1C2B4A;color:#fff">
+      <td style="padding:10px;border:1px solid #ccc">総合計</td>
+      <td style="padding:10px;border:1px solid #ccc;text-align:right">¥${fmt(grandTotal)}</td>
+      <td style="padding:10px;border:1px solid #ccc;text-align:right">${grandCount}件</td></tr>`;
+
+    openPrint(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+      body{font-family:'MS PGothic',sans-serif;margin:0;padding:28px;font-size:12px;color:#111}
+      h1{text-align:center;font-size:18px;margin:0 0 6px}
+      .period{text-align:center;font-size:13px;color:#555;margin-bottom:20px}
+      table{width:100%;border-collapse:collapse}
+      @media print{body{padding:10px}}
+    </style></head><body>
+      <h1>売上合計資料</h1>
+      <div class="period">${periodLabel}</div>
+      <table>
+        <thead><tr style="background:#1C2B4A;color:#fff">
+          <th style="padding:8px 10px;border:1px solid #ccc;text-align:left;width:50%">取引先</th>
+          <th style="padding:8px 10px;border:1px solid #ccc;text-align:right;width:30%">売上</th>
+          <th style="padding:8px 10px;border:1px solid #ccc;text-align:right;width:20%">件数</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </body></html>`);
+  };
+
+  const Section = ({ title, rows: sRows, total, count }) => (
+    <>
+      <tr><td colSpan={3} style={{ padding: "10px 12px", fontWeight: 700, fontSize: 14, color: C.white, background: C.navy }}>{title}</td></tr>
+      {sRows.map((r, i) => (
+        <tr key={i}><td style={{ ...s.td, paddingLeft: 28 }}>{r.name}</td><td style={{ ...s.td, textAlign: "right" }}>¥{fmt(r.amount)}</td><td style={{ ...s.td, textAlign: "right" }}>{r.count}件</td></tr>
+      ))}
+      <tr style={{ background: C.light, fontWeight: 700 }}><td style={s.td}>{title}小計</td><td style={{ ...s.td, textAlign: "right" }}>¥{fmt(total)}</td><td style={{ ...s.td, textAlign: "right" }}>{count}件</td></tr>
+    </>
+  );
+
+  return (
+    <div>
+      <div style={s.pageTitle}>売上合計資料</div>
+      <div style={{ ...s.card, padding: "12px 20px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <span style={s.label}>期間：</span>
+        <input style={s.input} type="month" value={monthFrom} onChange={e => { setMonthFrom(e.target.value); if (e.target.value > monthTo) setMonthTo(e.target.value); }} />
+        <span style={{ color: C.gray }}>～</span>
+        <input style={s.input} type="month" value={monthTo} onChange={e => { setMonthTo(e.target.value); if (e.target.value < monthFrom) setMonthFrom(e.target.value); }} />
+        <button style={s.btn("primary")} onClick={printReport}>🖨 印刷</button>
+      </div>
+      <div style={s.card}>
+        <table style={s.table}>
+          <thead><tr><th style={{ ...s.th, textAlign: "left", width: "50%" }}>取引先</th><th style={{ ...s.th, textAlign: "right", width: "30%" }}>売上</th><th style={{ ...s.th, textAlign: "right", width: "20%" }}>件数</th></tr></thead>
+          <tbody>
+            {ecRows.length > 0 && <Section title="EC売上" rows={ecRows} total={ecTotal} count={ecCount} />}
+            {wholesaleRows.length > 0 && <Section title="卸" rows={wholesaleRows} total={wholesaleTotal} count={wholesaleCount} />}
+            {eventRows.length > 0 && <Section title="イベント" rows={eventRows} total={eventTotal} count={eventCount} />}
+            {otherTotal > 0 && <Section title="その他" rows={[{ name: "その他", amount: otherTotal, count: otherCount }]} total={otherTotal} count={otherCount} />}
+            <tr style={{ background: C.navy, color: C.white, fontWeight: 700, fontSize: 15 }}>
+              <td style={{ padding: "12px" }}>総合計</td>
+              <td style={{ padding: "12px", textAlign: "right" }}>¥{fmt(grandTotal)}</td>
+              <td style={{ padding: "12px", textAlign: "right" }}>{grandCount}件</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ── Sales Page ────────────────────────────────────────────────────────────────
 function SalesPage({ clients, invoices, divisions, externalSales }) {
   const [viewMonth, setViewMonth] = useState(today().slice(0, 7));
@@ -4917,6 +5091,7 @@ export default function App() {
     { id: "home", label: "🏠 ホーム" },
     { id: "dashboard", label: "📊 売上概況" },
     { id: "sales", label: "📈 売上管理" },
+    { id: "salesReport", label: "📋 売上合計資料" },
     { id: "quotations", label: "📝 見積書一覧" },
     { id: "deliveries", label: "📦 納品書一覧" },
     { id: "invoices", label: "🧾 請求書一覧" },
@@ -4974,6 +5149,7 @@ export default function App() {
         {page==="invoices"&&<InvoicesList clients={clients} invoices={invoices} deliveries={deliveries} company={company} balances={balances} divisions={divisions} isAdmin={isAdmin}/>}
         {page==="monthly"&&<MonthlyBilling clients={clients} deliveries={deliveries} invoices={invoices} company={company} balances={balances} divisions={divisions}/>}
         {page==="sales"&&<SalesPage clients={clients} invoices={invoices} divisions={divisions} externalSales={externalSales}/>}
+        {page==="salesReport"&&<SalesReportPage clients={clients} invoices={invoices} externalSales={externalSales}/>}
         {page==="balance"&&<BalancePage clients={clients} invoices={invoices} balances={balances} company={company} paymentHistory={paymentHistory}/>}
         {page==="clients"&&<ClientsPage clients={clients} divisions={divisions} isAdmin={isAdmin}/>}
         {page==="products"&&<ProductsPage products={products} company={company} isAdmin={isAdmin}/>}
