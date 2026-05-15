@@ -196,7 +196,16 @@ table{width:100%;border-collapse:collapse;margin:14px 0}
 .pb{page-break-after:always}
 .bt th,.bt td{border:1px solid #ccc;padding:6px 8px;text-align:right;font-size:11px}
 .bt th{background:#1C2B4A;color:#fff;text-align:center}
-@media print{body{padding:10px}}`;
+@media print{body{padding:10px}}
+.q12,.q12 body{font-size:14.4px}
+.q12 h1{font-size:24px}
+.q12 .cn{font-size:18px}
+.q12 .co{font-size:13.2px}
+.q12 .meta{font-size:13.2px}
+.q12 .it th,.q12 .it td{font-size:13.2px!important}
+.q12 .bb{font-size:13.2px}
+.q12 .tot td{font-size:13.2px!important}
+.q12 .hd div{font-size:13.2px}`;
 
 function itemsHTML(items) {
   const groups = calcTaxByRate(items);
@@ -279,11 +288,11 @@ async function savePDFToStorage(blob, path) {
 
 function buildQuotationHTML(q, clients, co) {
   const cl = clients.find(c => c.id === q.clientId) || {};
-  return `<div style="font-size:1.2em"><h1>見　積　書</h1>
+  return `<div class="q12"><h1>見　積　書</h1>
   <div class="hd"><div><div>${cl.address || ""}</div><div class="cn">${cl.name || ""} ${cl.honorific || "御中"}</div>
   <div class="meta">見積番号：${q.docNo}<br>見積日：${q.date}<br>有効期限：${q.validUntil || ""}</div></div>${coBlock(co, q, false)}</div>
   ${itemsHTML(q.items || [])}${footerHTML(q.items || [], null)}
-  ${q.notes ? `<div style="margin-top:10px;font-size:11px;color:#555">備考：${q.notes}</div>` : ""}</div>`;
+  ${q.notes ? `<div style="margin-top:10px;font-size:13.2px;color:#555">備考：${q.notes}</div>` : ""}</div>`;
 }
 
 function buildDeliveryHTML(d, clients, co) {
@@ -365,12 +374,12 @@ function buildMeisaiHTML(inv, clients, co, bal) {
 
 function printQuotation(q,clients,co){
   const cl=clients.find(c=>c.id===q.clientId)||{};
-  openPrint(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${baseCSS}</style></head><body style="font-size:1.2em">
+  openPrint(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${baseCSS}</style></head><body class="q12">
   <h1>見　積　書</h1>
   <div class="hd"><div><div>${cl.address||""}</div><div class="cn">${cl.name||""} ${cl.honorific||"御中"}</div>
   <div class="meta">見積番号：${q.docNo}<br>見積日：${q.date}<br>有効期限：${q.validUntil||""}</div></div>${coBlock(co,q,false)}</div>
   ${itemsHTML(q.items||[])}${footerHTML(q.items||[],null)}
-  ${q.notes?`<div style="margin-top:10px;font-size:11px;color:#555">備考：${q.notes}</div>`:""}
+  ${q.notes?`<div style="margin-top:10px;font-size:13.2px;color:#555">備考：${q.notes}</div>`:""}
   </body></html>`);
 }
 
