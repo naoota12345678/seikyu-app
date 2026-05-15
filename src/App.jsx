@@ -2679,29 +2679,33 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
       </div>
 
       {/* サマリーカード */}
-      <div style={{ display: "flex", gap: 16, marginBottom: 20, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 16, marginBottom: 12, flexWrap: "wrap", alignItems: "stretch" }}>
         <div style={{ ...s.card, flex: "2 1 240px", textAlign: "center", margin: 0 }}>
           <div style={{ fontSize: 12, color: C.gray, marginBottom: 6 }}>{viewMonth.split("-")[1]}月 合計売上</div>
           <div style={{ fontSize: 28, fontWeight: 700, color: C.gold }}>¥{fmt(curGrand)}</div>
         </div>
-        {[
-          { label: "卸", value: "¥" + fmt(mInvs.filter(i => !clients.find(c => c.id === i.clientId)?.isEvent).reduce((a, i) => a + (i.total || 0), 0)), color: C.navy },
-          { label: "イベント", value: "¥" + fmt(mInvs.filter(i => clients.find(c => c.id === i.clientId)?.isEvent).reduce((a, i) => a + (i.total || 0), 0)), color: "#E67E22" },
-          ...sources.map(src => ({ label: sourceLabel(src), value: "¥" + fmt(currentData?.ext?.[src]?.amount || 0), color: C.green })),
-        ].map(st => (
-          <div key={st.label} style={{ ...s.card, flex: "1 1 120px", textAlign: "center", margin: 0 }}>
-            <div style={{ fontSize: 12, color: C.gray, marginBottom: 6 }}>{st.label}</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: st.color }}>{st.value}</div>
+        <div style={{ ...s.card, flex: "0 0 auto", margin: 0, display: "flex", flexDirection: "column", justifyContent: "center", gap: 6, padding: "10px 16px" }}>
+          <div style={{ whiteSpace: "nowrap", fontSize: 12 }}><span style={{ color: C.gray }}>総件数</span> <span style={{ fontWeight: 700, color: C.navy }}>{curCount} 件</span></div>
+          <div style={{ whiteSpace: "nowrap", fontSize: 12 }}><span style={{ color: C.gray }}>前月比</span> <span style={{ fontWeight: 700, color: growth > 0 ? C.green : growth < 0 ? C.red : C.gray }}>{growth !== null ? (growth > 0 ? "+" : "") + growth + "%" : "—"}</span></div>
+        </div>
+        <div style={{ ...s.card, flex: "1 1 140px", textAlign: "center", margin: 0 }}>
+          <div style={{ fontSize: 12, color: C.gray, marginBottom: 6 }}>卸</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: C.navy }}>¥{fmt(mInvs.filter(i => !clients.find(c => c.id === i.clientId)?.isEvent).reduce((a, i) => a + (i.total || 0), 0))}</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 16, marginBottom: 20, flexWrap: "wrap" }}>
+        {["amazon","colorme","rakuten"].filter(src => sources.includes(src)).map(src => (
+          <div key={src} style={{ ...s.card, flex: "1 1 140px", textAlign: "center", margin: 0 }}>
+            <div style={{ fontSize: 12, color: C.gray, marginBottom: 6 }}>{sourceLabel(src)}</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: C.green }}>¥{fmt(currentData?.ext?.[src]?.amount || 0)}</div>
           </div>
         ))}
-        <div style={{ ...s.card, flex: "0 1 80px", textAlign: "center", margin: 0 }}>
-          <div style={{ fontSize: 11, color: C.gray, marginBottom: 6 }}>総件数</div>
-          <div style={{ fontSize: 15, fontWeight: 700, color: C.navy }}>{curCount} 件</div>
-        </div>
-        <div style={{ ...s.card, flex: "0 1 80px", textAlign: "center", margin: 0 }}>
-          <div style={{ fontSize: 11, color: C.gray, marginBottom: 6 }}>前月比</div>
-          <div style={{ fontSize: 15, fontWeight: 700, color: growth > 0 ? C.green : growth < 0 ? C.red : C.gray }}>{growth !== null ? (growth > 0 ? "+" : "") + growth + "%" : "—"}</div>
-        </div>
+        {sources.filter(src => !["amazon","colorme","rakuten"].includes(src)).map(src => (
+          <div key={src} style={{ ...s.card, flex: "1 1 140px", textAlign: "center", margin: 0 }}>
+            <div style={{ fontSize: 12, color: C.gray, marginBottom: 6 }}>{sourceLabel(src)}</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: C.green }}>¥{fmt(currentData?.ext?.[src]?.amount || 0)}</div>
+          </div>
+        ))}
       </div>
 
       {viewMode === "daily" && (
