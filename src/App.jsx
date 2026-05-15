@@ -2733,7 +2733,7 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
         <div style={s.card}>
           <h3 style={{ margin: "0 0 16px", color: C.navy }}>月別売上推移（直近12ヶ月）</h3>
           <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 200, marginBottom: 16, padding: "0 8px" }}>
-            {monthlyData.map(d => {
+            {[...monthlyData].reverse().map(d => {
               const h = Math.max(4, (d.grandTotal / maxSales) * 180);
               const isCurrent = d.month === viewMonth;
               return (
@@ -2785,7 +2785,7 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
 
       {viewMode === "division" && (() => {
         const months12 = [];
-        for (let i = 11; i >= 0; i--) {
+        for (let i = 0; i <= 11; i++) {
           const d = new Date(viewMonth + "-01");
           d.setMonth(d.getMonth() - i);
           months12.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
@@ -2848,7 +2848,7 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
 
       {viewMode === "client" && (() => {
         const months12 = [];
-        for (let i = 11; i >= 0; i--) {
+        for (let i = 0; i <= 11; i++) {
           const d = new Date(viewMonth + "-01");
           d.setMonth(d.getMonth() - i);
           months12.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
