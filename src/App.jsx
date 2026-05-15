@@ -2633,7 +2633,14 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
     if (!file) return;
     setImporting(true);
     try {
-      const text = (await file.text()).replace(/^\uFEFF/, "");
+      let text;
+      const buf = await file.arrayBuffer();
+      const uint8 = new Uint8Array(buf);
+      if (uint8[0] === 0xEF && uint8[1] === 0xBB && uint8[2] === 0xBF) {
+        text = new TextDecoder("utf-8").decode(buf).replace(/^\uFEFF/, "");
+      } else {
+        text = new TextDecoder("shift-jis").decode(buf);
+      }
       const lines = text.split(/\r?\n/).filter(l => l.trim());
       const header = parseCSVLine(lines[0]).map(h => h.trim());
       const dateIdx = header.findIndex(h => h.includes("日付") || h.toLowerCase() === "date");
