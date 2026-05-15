@@ -2640,7 +2640,7 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
       const amountIdx = header.findIndex(h => h.includes("売上") || h.includes("金額") || h.toLowerCase() === "amount");
       const countIdx = header.findIndex(h => h.includes("件数") || h.toLowerCase() === "count");
       const sourceIdx = header.findIndex(h => h.includes("ソース") || h.includes("source") || h.includes("チャネル"));
-      if (dateIdx === -1 || amountIdx === -1) { alert("「日付」「売上/金額」列が必要です"); setImporting(false); return; }
+      if (dateIdx === -1 || amountIdx === -1) { alert("「日付」「売上/金額」列が必要です\nヘッダー: " + JSON.stringify(header)); setImporting(false); return; }
       const rows = lines.slice(1);
       const batch = writeBatch(db);
       let count = 0;
