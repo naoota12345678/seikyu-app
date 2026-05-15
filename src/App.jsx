@@ -2633,9 +2633,9 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
     if (!file) return;
     setImporting(true);
     try {
-      const text = await file.text();
+      const text = (await file.text()).replace(/^\uFEFF/, "");
       const lines = text.split(/\r?\n/).filter(l => l.trim());
-      const header = parseCSVLine(lines[0]);
+      const header = parseCSVLine(lines[0]).map(h => h.trim());
       const dateIdx = header.findIndex(h => h.includes("日付") || h.toLowerCase() === "date");
       const amountIdx = header.findIndex(h => h.includes("売上") || h.includes("金額") || h.toLowerCase() === "amount");
       const countIdx = header.findIndex(h => h.includes("件数") || h.toLowerCase() === "count");
