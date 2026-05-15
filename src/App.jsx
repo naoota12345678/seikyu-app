@@ -2627,7 +2627,7 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
   const clientRank = Object.entries(clientSales).sort((a, b) => b[1].total - a[1].total);
 
   // ── CSV同期 ──
-  const sourceLabel = (src) => src === "rakuten" ? "楽天" : src === "amazon" ? "Amazon" : src === "invoice" ? "請求書" : src;
+  const sourceLabel = (src) => src === "rakuten" ? "楽天" : src === "amazon" ? "Amazon" : src === "csv" ? "店舗売上" : src === "invoice" ? "請求書" : src;
   const handleCSVImport = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -2803,7 +2803,8 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
         invoices.forEach(inv => {
           const m = (inv.date || "").slice(0, 7);
           if (!months12.includes(m)) return;
-          const divId = inv.divisionId || "_none";
+          const cl = clients.find(c => c.id === inv.clientId);
+          const divId = inv.divisionId || cl?.divisionId || "_none";
           if (!divMap[divId]) divMap[divId] = {};
           if (!divMap[divId][m]) divMap[divId][m] = 0;
           divMap[divId][m] += (inv.total || 0);
