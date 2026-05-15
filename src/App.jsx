@@ -2643,9 +2643,9 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
       }
       const lines = text.split(/\r?\n/).filter(l => l.trim());
       const header = parseCSVLine(lines[0]).map(h => h.trim());
-      const dateIdx = header.findIndex(h => h.includes("日付") || h.toLowerCase() === "date");
-      const amountIdx = header.findIndex(h => h.includes("売上") || h.includes("金額") || h.toLowerCase() === "amount");
-      const countIdx = header.findIndex(h => h.includes("件数") || h.toLowerCase() === "count");
+      const dateIdx = header.findIndex(h => h.includes("日付") || h.includes("集計期間") || h.toLowerCase() === "date");
+      const amountIdx = header.findIndex(h => h === "売上" || h.includes("売上金額") || h.includes("金額") || h.toLowerCase() === "amount");
+      const countIdx = header.findIndex(h => h.includes("件数") || h.includes("客数") || h.toLowerCase() === "count");
       const sourceIdx = header.findIndex(h => h.includes("ソース") || h.includes("source") || h.includes("チャネル"));
       if (dateIdx === -1 || amountIdx === -1) { alert("「日付」「売上/金額」列が必要です\nヘッダー: " + JSON.stringify(header)); setImporting(false); return; }
       const rows = lines.slice(1);
@@ -2653,7 +2653,8 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
       let count = 0;
       for (const line of rows) {
         const cols = parseCSVLine(line);
-        const date = (cols[dateIdx] || "").trim();
+        let date = (cols[dateIdx] || "").trim();
+        if (/^\d{8}$/.test(date)) date = date.slice(0,4) + "-" + date.slice(4,6) + "-" + date.slice(6,8);
         const amount = Number((cols[amountIdx] || "").replace(/[¥￥,]/g, "")) || 0;
         const cnt = countIdx >= 0 ? (Number(cols[countIdx]) || 0) : 1;
         const source = sourceIdx >= 0 ? (cols[sourceIdx] || "").trim().toLowerCase() || "csv" : "csv";
