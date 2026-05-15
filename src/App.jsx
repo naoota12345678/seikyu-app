@@ -2821,7 +2821,7 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
               {divRows.map(([divId, mData]) => {
                 const isExt = divId.startsWith("_ext_");
                 const div = isExt ? null : divisions.find(d => d.id === divId);
-                const name = isExt ? sourceLabel(divId.replace("_ext_", "")) : (div ? div.name : "未設定");
+                const name = isExt ? sourceLabel(divId.replace("_ext_", "")) : (div ? div.name : "卸");
                 const rowTotal = Object.values(mData).reduce((s, v) => s + v, 0);
                 return (
                   <tr key={divId} style={isExt ? { background: "#faf8f0" } : {}}>
