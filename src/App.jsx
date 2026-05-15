@@ -181,10 +181,10 @@ const baseCSS = `body{font-family:'MS PGothic',sans-serif;margin:0;padding:28px;
 h1{text-align:center;font-size:20px;letter-spacing:6px;margin:0 0 20px;padding:4px 0;border:2px solid #333}
 .hd{display:flex;justify-content:space-between;margin-bottom:16px}
 .cn{font-size:15px;font-weight:bold;border-bottom:2px solid #1C2B4A;padding-bottom:3px;display:inline-block}
-.co{text-align:right;font-size:11px;line-height:1.9;position:relative}
+.co{text-align:left;font-size:11px;line-height:1.9;position:relative}
 .kakuin{position:absolute;right:-50px;top:-60px;width:160px;height:160px;opacity:0.7;pointer-events:none}
-.stamp-area{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
-.stamp-box{width:42px;height:42px;border:1.5px solid #333}
+.stamp-area{display:flex;justify-content:flex-end;margin-top:8px}
+.stamp-box{width:42px;height:42px;border:1.5px solid #333}.stamp-box+.stamp-box{border-left:none}
 .meta{font-size:11px;margin-top:10px;line-height:1.8}
 table{width:100%;border-collapse:collapse;margin:14px 0}
 .it th{background:#1C2B4A;color:#fff;padding:6px 8px;text-align:center;font-size:11px}
@@ -279,11 +279,11 @@ async function savePDFToStorage(blob, path) {
 
 function buildQuotationHTML(q, clients, co) {
   const cl = clients.find(c => c.id === q.clientId) || {};
-  return `<h1>見　積　書</h1>
+  return `<div style="font-size:1.2em"><h1>見　積　書</h1>
   <div class="hd"><div><div>${cl.address || ""}</div><div class="cn">${cl.name || ""} ${cl.honorific || "御中"}</div>
   <div class="meta">見積番号：${q.docNo}<br>見積日：${q.date}<br>有効期限：${q.validUntil || ""}</div></div>${coBlock(co, q, false)}</div>
   ${itemsHTML(q.items || [])}${footerHTML(q.items || [], null)}
-  ${q.notes ? `<div style="margin-top:10px;font-size:11px;color:#555">備考：${q.notes}</div>` : ""}`;
+  ${q.notes ? `<div style="margin-top:10px;font-size:11px;color:#555">備考：${q.notes}</div>` : ""}</div>`;
 }
 
 function buildDeliveryHTML(d, clients, co) {
@@ -365,7 +365,7 @@ function buildMeisaiHTML(inv, clients, co, bal) {
 
 function printQuotation(q,clients,co){
   const cl=clients.find(c=>c.id===q.clientId)||{};
-  openPrint(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${baseCSS}</style></head><body>
+  openPrint(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${baseCSS}</style></head><body style="font-size:1.2em">
   <h1>見　積　書</h1>
   <div class="hd"><div><div>${cl.address||""}</div><div class="cn">${cl.name||""} ${cl.honorific||"御中"}</div>
   <div class="meta">見積番号：${q.docNo}<br>見積日：${q.date}<br>有効期限：${q.validUntil||""}</div></div>${coBlock(co,q,false)}</div>
