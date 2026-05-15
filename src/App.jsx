@@ -2826,6 +2826,11 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
           divMap[key][m] += (e.totalAmount || 0);
         });
         const divRows = Object.entries(divMap).sort((a, b) => {
+          const divA = divisions.find(d => d.id === a[0]);
+          const divB = divisions.find(d => d.id === b[0]);
+          const sa = divA?.sortOrder || 0;
+          const sb = divB?.sortOrder || 0;
+          if (sa !== sb) return sa - sb;
           const ta = Object.values(a[1]).reduce((s, v) => s + v, 0);
           const tb = Object.values(b[1]).reduce((s, v) => s + v, 0);
           return tb - ta;
@@ -4145,7 +4150,7 @@ function PDFHistoryPage({ isAdmin }) {
 
 // ── Divisions ─────────────────────────────────────────────────────────────────
 function DivisionsPage({ divisions, isAdmin }) {
-  const empty = { name:"",prefix:"",address:"",tel:"",fax:"",registrationNo:"",bankName:"",bankBranch:"",bankType:"普通",bankNo:"",bankHolder:"" };
+  const empty = { name:"",prefix:"",address:"",tel:"",fax:"",registrationNo:"",bankName:"",bankBranch:"",bankType:"普通",bankNo:"",bankHolder:"",sortOrder:0 };
   const [form, setForm] = useState(empty);
   const [editing, setEditing] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -4187,6 +4192,7 @@ function DivisionsPage({ divisions, isAdmin }) {
             <div style={{...s.row,marginBottom:12}}>
               <div style={s.col}><span style={s.label}>事業部名 *</span><input style={s.input} value={form.name} onChange={e=>setF("name",e.target.value)} placeholder="例：自社製品事業部" /></div>
               <div style={s.col}><span style={s.label}>接頭辞 *</span><input style={{...s.input,width:100}} value={form.prefix} onChange={e=>setF("prefix",e.target.value)} placeholder="例：A" /></div>
+              <div style={s.col}><span style={s.label}>表示順</span><input type="number" style={{...s.input,width:80}} value={form.sortOrder||0} onChange={e=>setF("sortOrder",Number(e.target.value)||0)} /></div>
               <div style={s.col}><span style={s.label}>電話番号</span><input style={s.input} value={form.tel} onChange={e=>setF("tel",e.target.value)} /></div>
               <div style={s.col}><span style={s.label}>FAX</span><input style={s.input} value={form.fax} onChange={e=>setF("fax",e.target.value)} /></div>
             </div>
@@ -4222,13 +4228,14 @@ function DivisionsPage({ divisions, isAdmin }) {
           </div>
         )}
         <table style={s.table}>
-          <thead><tr>{isAdmin && <th style={s.th}><input type="checkbox" onChange={e=>setSelected(e.target.checked?new Set(divisions.map(d=>d.id)):new Set())} checked={divisions.length>0&&divisions.every(d=>selected.has(d.id))}/></th>}<th style={s.th}>事業部名</th><th style={s.th}>接頭辞</th><th style={s.th}>住所</th><th style={s.th}>電話</th><th style={s.th}>口座</th><th style={s.th}>操作</th></tr></thead>
+          <thead><tr>{isAdmin && <th style={s.th}><input type="checkbox" onChange={e=>setSelected(e.target.checked?new Set(divisions.map(d=>d.id)):new Set())} checked={divisions.length>0&&divisions.every(d=>selected.has(d.id))}/></th>}<th style={s.th}>事業部名</th><th style={s.th}>接頭辞</th><th style={s.th}>表示順</th><th style={s.th}>住所</th><th style={s.th}>電話</th><th style={s.th}>口座</th><th style={s.th}>操作</th></tr></thead>
           <tbody>
             {divisions.map(d => (
               <tr key={d.id} style={selected.has(d.id)?{background:"#EBF5FB"}:{}}>
                 {isAdmin && <td style={s.td}><input type="checkbox" checked={selected.has(d.id)} onChange={e=>{const n=new Set(selected);e.target.checked?n.add(d.id):n.delete(d.id);setSelected(n);}}/></td>}
                 <td style={s.td}><strong>{d.name}</strong></td>
                 <td style={s.td}><span style={s.badge("blue")}>{d.prefix}</span></td>
+                <td style={s.td}>{d.sortOrder||0}</td>
                 <td style={s.td}>{d.address||"—"}</td>
                 <td style={s.td}>{d.tel||"—"}</td>
                 <td style={s.td}>{d.bankName ? `${d.bankName} ${d.bankBranch}` : "—"}</td>
@@ -4240,7 +4247,7 @@ function DivisionsPage({ divisions, isAdmin }) {
                 </td>
               </tr>
             ))}
-            {!divisions.length && <tr><td colSpan={isAdmin?7:6} style={{...s.td,textAlign:"center",color:C.gray}}>事業部が登録されていません</td></tr>}
+            {!divisions.length && <tr><td colSpan={isAdmin?8:7} style={{...s.td,textAlign:"center",color:C.gray}}>事業部が登録されていません</td></tr>}
           </tbody>
         </table>
       </div>
