@@ -180,11 +180,11 @@ const s = {
 const baseCSS = `body{font-family:'MS PGothic',sans-serif;margin:0;padding:28px;font-size:12px;color:#111}
 h1{text-align:center;font-size:20px;letter-spacing:6px;margin:0 0 20px;padding:4px 0;border:2px solid #333}
 .hd{display:flex;justify-content:space-between;margin-bottom:16px}
-.cn{font-size:15px;font-weight:bold;border-bottom:2px solid #1C2B4A;padding-bottom:3px;display:inline-block}
+.cn{font-size:22.5px;font-weight:bold;border-bottom:2px solid #1C2B4A;padding-bottom:3px;display:inline-block}
 .co{text-align:left;font-size:11px;line-height:1.9;position:relative}
 .kakuin{position:absolute;right:-50px;top:-60px;width:160px;height:160px;opacity:0.7;pointer-events:none}
-.stamp-area{display:flex;justify-content:flex-end;margin-top:8px}
-.stamp-box{width:42px;height:42px;border:1.5px solid #333}.stamp-box+.stamp-box{border-left:none}
+.stamp-area{display:flex;justify-content:flex-end;margin-top:8px;gap:0}
+.stamp-box{width:42px;height:42px;border:1.5px solid #333;margin:0;padding:0;display:block}.stamp-box+.stamp-box{border-left:none;margin-left:-1.5px}
 .meta{font-size:11px;margin-top:10px;line-height:1.8}
 table{width:100%;border-collapse:collapse;margin:14px 0}
 .it th{background:#1C2B4A;color:#fff;padding:6px 8px;text-align:center;font-size:11px}
@@ -196,10 +196,10 @@ table{width:100%;border-collapse:collapse;margin:14px 0}
 .pb{page-break-after:always}
 .bt th,.bt td{border:1px solid #ccc;padding:6px 8px;text-align:right;font-size:11px}
 .bt th{background:#1C2B4A;color:#fff;text-align:center}
-@media print{body{padding:10px}}
+@media print{*{box-sizing:border-box}body{padding:10mm;width:100%;max-width:100%}table{table-layout:fixed;word-break:break-all}.kakuin{right:0px!important}}
 .q12,.q12 body{font-size:14.4px}
 .q12 h1{font-size:24px}
-.q12 .cn{font-size:18px}
+.q12 .cn{font-size:27px!important}
 .q12 .co{font-size:13.2px}
 .q12 .meta{font-size:13.2px}
 .q12 .it th,.q12 .it td{font-size:13.2px!important}
@@ -2260,7 +2260,7 @@ function SalesReportPage({ clients, invoices, externalSales }) {
       h1{text-align:center;font-size:18px;margin:0 0 6px}
       .period{text-align:center;font-size:13px;color:#555;margin-bottom:20px}
       table{width:100%;border-collapse:collapse}
-      @media print{body{padding:10px}}
+      @media print{*{box-sizing:border-box}body{padding:10mm;width:100%;max-width:100%}table{table-layout:fixed;word-break:break-all}.kakuin{right:0px!important}}
     </style></head><body>
       <h1>売上合計資料</h1>
       <div class="period">${periodLabel}</div>
