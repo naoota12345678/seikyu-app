@@ -143,7 +143,7 @@ function getNextClosingDate(closingDays) {
 
 const s = {
   app: { display: "flex", minHeight: "100vh", fontFamily: "'Noto Sans JP', sans-serif", background: C.cream },
-  sidebar: { width: 220, background: C.navy, color: C.white, display: "flex", flexDirection: "column", padding: "0 0 24px 0", flexShrink: 0 },
+  sidebar: { width: 220, background: C.navy, color: C.white, display: "flex", flexDirection: "column", padding: "0 0 24px 0", flexShrink: 0, position: "sticky", top: 0, height: "100vh", overflowY: "auto" },
   sideTitle: { padding: "28px 20px 20px", borderBottom: "1px solid rgba(255,255,255,0.1)", marginBottom: 8 },
   navBtn: (active) => ({
     display: "block", width: "100%", textAlign: "left", padding: "11px 20px",
