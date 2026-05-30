@@ -2172,8 +2172,8 @@ function SalesReportPage({ clients, invoices, externalSales }) {
     return months.includes(m);
   });
 
-  // EC売上（ソース別）
-  const ecSources = [...new Set(periodExt.map(e => e.source))].sort();
+  // EC売上（楽天・Amazon・カラーミー）
+  const ecSources = [...new Set(periodExt.filter(e => e.source !== "csv" && e.source !== "other").map(e => e.source))].sort();
   const sourceLabel = (src) => src === "rakuten" ? "楽天" : src === "amazon" ? "Amazon" : src === "colorme" ? "カラーミー" : src === "csv" ? "店舗売上" : src;
   const ecRows = ecSources.map(src => {
     const items = periodExt.filter(e => e.source === src);
@@ -2181,6 +2181,11 @@ function SalesReportPage({ clients, invoices, externalSales }) {
   });
   const ecTotal = ecRows.reduce((a, r) => a + r.amount, 0);
   const ecCount = ecRows.reduce((a, r) => a + r.count, 0);
+
+  // 店舗売上（CSV）
+  const shopExt = periodExt.filter(e => e.source === "csv");
+  const shopTotal = shopExt.reduce((a, e) => a + (e.totalAmount || 0), 0);
+  const shopCount = shopExt.reduce((a, e) => a + (e.orderCount || 0), 0);
 
   // 卸（isEvent でない取引先）
   const wholesaleInvs = periodInvs.filter(i => !clients.find(c => c.id === i.clientId)?.isEvent);
@@ -2212,8 +2217,8 @@ function SalesReportPage({ clients, invoices, externalSales }) {
   const eventTotal = eventRows.reduce((a, r) => a + r.amount, 0);
   const eventCount = eventRows.reduce((a, r) => a + r.count, 0);
 
-  const grandTotal = ecTotal + wholesaleTotal + eventTotal;
-  const grandCount = ecCount + wholesaleCount + eventCount;
+  const grandTotal = ecTotal + shopTotal + wholesaleTotal + eventTotal;
+  const grandCount = ecCount + shopCount + wholesaleCount + eventCount;
 
   const printReport = () => {
     const row = (name, amount, count, bold, indent) =>
@@ -2230,6 +2235,10 @@ function SalesReportPage({ clients, invoices, externalSales }) {
       rows += catHeader("EC売上");
       ecRows.forEach(r => rows += row(r.name, r.amount, r.count, false, true));
       rows += row("EC小計", ecTotal, ecCount, true, false);
+    }
+    if (shopTotal > 0) {
+      rows += catHeader("店舗売上");
+      rows += row("店舗売上", shopTotal, shopCount, true, true);
     }
     if (wholesaleRows.length) {
       rows += catHeader("卸");
@@ -2291,6 +2300,7 @@ function SalesReportPage({ clients, invoices, externalSales }) {
           <thead><tr><th style={{ ...s.th, textAlign: "left", width: "50%" }}>取引先</th><th style={{ ...s.th, textAlign: "right", width: "30%" }}>売上</th><th style={{ ...s.th, textAlign: "right", width: "20%" }}>件数</th></tr></thead>
           <tbody>
             {ecRows.length > 0 && <Section title="EC売上" rows={ecRows} total={ecTotal} count={ecCount} />}
+            {shopTotal > 0 && <Section title="店舗売上" rows={[{ name: "店舗売上", amount: shopTotal, count: shopCount }]} total={shopTotal} count={shopCount} />}
             {wholesaleRows.length > 0 && <Section title="卸" rows={wholesaleRows} total={wholesaleTotal} count={wholesaleCount} />}
             {eventRows.length > 0 && <Section title="イベント" rows={eventRows} total={eventTotal} count={eventCount} />}
             <tr style={{ background: C.navy, color: C.white, fontWeight: 700, fontSize: 15 }}>
