@@ -1707,13 +1707,12 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
 }
 
 // ── Invoices ──────────────────────────────────────────────────────────────────
-function InvoicesList({ clients, invoices, deliveries, company, balances, divisions, isAdmin }) {
+function InvoicesList({ clients, invoices, deliveries, company, balances, divisions, isAdmin, setPage, setBalanceOpenClientId }) {
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [printTarget, setPrintTarget] = useState(null);
   const [previewTarget, setPreviewTarget] = useState(null);
-  const [balTarget, setBalTarget] = useState(null);
   const [sendTarget, setSendTarget] = useState(null);
   const [resendTarget, setResendTarget] = useState(null);
   const [reRequestMenu, setReRequestMenu] = useState(null);
@@ -1806,7 +1805,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
                         </span>
                       )}
                       {inv.status !== "paid" && (
-                        <button style={{ ...s.btn("gold"), padding: "4px 8px", fontSize: 12 }} onClick={() => setBalTarget({ client, balance: bal })}>入金記録</button>
+                        <button style={{ ...s.btn("gold"), padding: "4px 8px", fontSize: 12 }} onClick={() => { setBalanceOpenClientId(client.id); setPage("balance"); }}>入金記録</button>
                       )}
                       {isAdmin && <button style={{ ...s.btn("red"), padding: "4px 8px", fontSize: 12 }} onClick={() => del(inv.id)}>削除</button>}
                     </div>
@@ -1863,7 +1862,6 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
       })()}
       {printTarget && <PrintModeModal invoice={printTarget.invoice} delivery={printTarget.delivery}
         clients={clients} company={company} balances={balances} divisions={divisions} onClose={() => setPrintTarget(null)} />}
-      {balTarget && <BalanceModal client={balTarget.client} balance={balTarget.balance} onClose={() => setBalTarget(null)} />}
       {sendTarget && <SendRecordModal invoice={sendTarget} clients={clients} company={company} divisions={divisions} balances={balances} onClose={() => setSendTarget(null)} />}
       {resendTarget && <ResendModal invoice={resendTarget} clients={clients} company={company} divisions={divisions} balances={balances} onClose={() => setResendTarget(null)} />}
       {reRequestTarget && (() => {
@@ -2927,7 +2925,7 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
 }
 
 // ── Balance Page ──────────────────────────────────────────────────────────────
-function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
+function BalancePage({ clients, invoices, balances, company, paymentHistory, initialOpenClientId, clearInitialOpenClientId }) {
   const [balTarget, setBalTarget] = useState(null);
   const [filter, setFilter] = useState("all"); // all | overdue | hasBalance
   const [stripeTarget, setStripeTarget] = useState(null);
@@ -2940,8 +2938,19 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
   const [openingTarget, setOpeningTarget] = useState(null);
   const [openingAmount, setOpeningAmount] = useState("");
   const [openingDate, setOpeningDate] = useState(today().slice(0, 7) + "-01");
-  const [openBalClients, setOpenBalClients] = useState({});
+  const [openBalClients, setOpenBalClients] = useState(() => initialOpenClientId ? { [initialOpenClientId]: true } : {});
   const total = Object.values(balances).reduce((a, b) => a + (b.currentBalance || 0), 0);
+
+  useEffect(() => {
+    if (initialOpenClientId) {
+      setOpenBalClients(prev => ({ ...prev, [initialOpenClientId]: true }));
+      clearInitialOpenClientId();
+      setTimeout(() => {
+        const el = document.getElementById("bal-" + initialOpenClientId);
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 100);
+    }
+  }, [initialOpenClientId]);
 
   const cancelPayment = async (ph) => {
     if (!confirm(`${ph.clientName} の入金 ¥${fmt(ph.amount)}（${ph.date}）を取り消しますか？\n\n残高が元に戻ります。`)) return;
@@ -3045,7 +3054,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory }) {
         const isOpenBal = openBalClients[client.id];
         const clientInvoices = invoices.filter(i => i.clientId === client.id).sort((a,b) => (b.date||"").localeCompare(a.date||""));
         return (
-          <div key={client.id} style={{ ...s.card, background: client.isOverdue ? "#fff5f5" : "white" }}>
+          <div key={client.id} id={"bal-" + client.id} style={{ ...s.card, background: client.isOverdue ? "#fff5f5" : "white" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }} onClick={() => setOpenBalClients(prev => ({ ...prev, [client.id]: !prev[client.id] }))}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontSize: 12, color: C.gray }}>{isOpenBal ? "▼" : "▶"}</span>
@@ -5045,6 +5054,7 @@ export default function App() {
   const [user, setUser] = useState(undefined); // undefined=checking, null=not logged in, object=logged in
   const [userRole, setUserRole] = useState(null); // "admin" | "staff"
   const [page, setPage] = useState("home");
+  const [balanceOpenClientId, setBalanceOpenClientId] = useState(null);
   const [openGroups, setOpenGroups] = useState({});
   const [clients, setClients] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
@@ -5175,11 +5185,11 @@ export default function App() {
         {page==="dashboard"&&<Dashboard clients={clients} deliveries={deliveries} invoices={invoices} balances={balances}/>}
         {page==="quotations"&&<QuotationsList clients={clients} quotations={quotations} products={products} deliveries={deliveries} company={company} clientPrices={clientPrices} divisions={divisions} isAdmin={isAdmin}/>}
         {page==="deliveries"&&<DeliveriesList clients={clients} deliveries={deliveries} products={products} invoices={invoices} company={company} balances={balances} clientPrices={clientPrices} divisions={divisions} isAdmin={isAdmin}/>}
-        {page==="invoices"&&<InvoicesList clients={clients} invoices={invoices} deliveries={deliveries} company={company} balances={balances} divisions={divisions} isAdmin={isAdmin}/>}
+        {page==="invoices"&&<InvoicesList clients={clients} invoices={invoices} deliveries={deliveries} company={company} balances={balances} divisions={divisions} isAdmin={isAdmin} setPage={setPage} setBalanceOpenClientId={setBalanceOpenClientId}/>}
         {page==="monthly"&&<MonthlyBilling clients={clients} deliveries={deliveries} invoices={invoices} company={company} balances={balances} divisions={divisions}/>}
         {page==="sales"&&<SalesPage clients={clients} invoices={invoices} divisions={divisions} externalSales={externalSales}/>}
         {page==="salesReport"&&<SalesReportPage clients={clients} invoices={invoices} externalSales={externalSales}/>}
-        {page==="balance"&&<BalancePage clients={clients} invoices={invoices} balances={balances} company={company} paymentHistory={paymentHistory}/>}
+        {page==="balance"&&<BalancePage clients={clients} invoices={invoices} balances={balances} company={company} paymentHistory={paymentHistory} initialOpenClientId={balanceOpenClientId} clearInitialOpenClientId={() => setBalanceOpenClientId(null)}/>}
         {page==="clients"&&<ClientsPage clients={clients} divisions={divisions} isAdmin={isAdmin}/>}
         {page==="products"&&<ProductsPage products={products} company={company} isAdmin={isAdmin}/>}
         {page==="clientPrices"&&<ClientPricesPage clients={clients} products={products} clientPrices={clientPrices} isAdmin={isAdmin}/>}
