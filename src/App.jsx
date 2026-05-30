@@ -2174,7 +2174,7 @@ function SalesReportPage({ clients, invoices, externalSales }) {
 
   // EC売上（ソース別）
   const ecSources = [...new Set(periodExt.map(e => e.source))].sort();
-  const sourceLabel = (src) => src === "rakuten" ? "楽天" : src === "amazon" ? "Amazon" : src === "colorme" ? "カラーミー" : src;
+  const sourceLabel = (src) => src === "rakuten" ? "楽天" : src === "amazon" ? "Amazon" : src === "colorme" ? "カラーミー" : src === "csv" ? "店舗売上" : src;
   const ecRows = ecSources.map(src => {
     const items = periodExt.filter(e => e.source === src);
     return { name: sourceLabel(src), amount: items.reduce((a, e) => a + (e.totalAmount || 0), 0), count: items.reduce((a, e) => a + (e.orderCount || 0), 0) };
@@ -2212,13 +2212,8 @@ function SalesReportPage({ clients, invoices, externalSales }) {
   const eventTotal = eventRows.reduce((a, r) => a + r.amount, 0);
   const eventCount = eventRows.reduce((a, r) => a + r.count, 0);
 
-  // その他（CSV等の外部売上で EC以外があれば）
-  const otherExt = periodExt.filter(e => e.source === "csv" || e.source === "other");
-  const otherTotal = otherExt.reduce((a, e) => a + (e.totalAmount || 0), 0);
-  const otherCount = otherExt.reduce((a, e) => a + (e.orderCount || 0), 0);
-
-  const grandTotal = ecTotal + wholesaleTotal + eventTotal + otherTotal;
-  const grandCount = ecCount + wholesaleCount + eventCount + otherCount;
+  const grandTotal = ecTotal + wholesaleTotal + eventTotal;
+  const grandCount = ecCount + wholesaleCount + eventCount;
 
   const printReport = () => {
     const row = (name, amount, count, bold, indent) =>
@@ -2245,10 +2240,6 @@ function SalesReportPage({ clients, invoices, externalSales }) {
       rows += catHeader("イベント");
       eventRows.forEach(r => rows += row(r.name, r.amount, r.count, false, true));
       rows += row("イベント小計", eventTotal, eventCount, true, false);
-    }
-    if (otherTotal > 0) {
-      rows += catHeader("その他");
-      rows += row("その他", otherTotal, otherCount, true, true);
     }
     rows += `<tr style="font-weight:bold;font-size:14px;background:#1C2B4A;color:#fff">
       <td style="padding:10px;border:1px solid #ccc">総合計</td>
@@ -2302,7 +2293,6 @@ function SalesReportPage({ clients, invoices, externalSales }) {
             {ecRows.length > 0 && <Section title="EC売上" rows={ecRows} total={ecTotal} count={ecCount} />}
             {wholesaleRows.length > 0 && <Section title="卸" rows={wholesaleRows} total={wholesaleTotal} count={wholesaleCount} />}
             {eventRows.length > 0 && <Section title="イベント" rows={eventRows} total={eventTotal} count={eventCount} />}
-            {otherTotal > 0 && <Section title="その他" rows={[{ name: "その他", amount: otherTotal, count: otherCount }]} total={otherTotal} count={otherCount} />}
             <tr style={{ background: C.navy, color: C.white, fontWeight: 700, fontSize: 15 }}>
               <td style={{ padding: "12px" }}>総合計</td>
               <td style={{ padding: "12px", textAlign: "right" }}>¥{fmt(grandTotal)}</td>
@@ -3366,7 +3356,7 @@ function ClientsPage({ clients, divisions, isAdmin }) {
     setForm({ ...c, closingDays: normalizedDays });
     setEditing(c); setShowForm(true);
   };
-  const del = async (id) => { if (confirm("削除しますか？")) await deleteDoc(doc(db, "clients", id)); };
+  const del = async (id) => { if (confirm("削除しますか？")) { await deleteDoc(doc(db, "clients", id)); await deleteDoc(doc(db, "clientBalances", id)).catch(() => {}); } };
   const bulkDel = async () => {
     if (!selected.size) return;
     if (!confirm(`${selected.size}件の取引先を削除しますか？`)) return;
