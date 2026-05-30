@@ -218,7 +218,7 @@ export default async function handler(req, res) {
 
         try {
           const allItems = dels.flatMap(d => d.data().items || []);
-          if (settings0.invoiceApproval) {
+          if (settings0.approvalEnabled && settings0.invoiceApproval) {
             // 承認モード: 締日当日に承認待ちに追加
             const { sub, tax, total } = totalFromItems(allItems);
             await db.collection("pendingBillings").add({
@@ -281,7 +281,7 @@ export default async function handler(req, res) {
 
       try {
         const items = [{ name: r.itemName, qty: r.qty || 1, unit: r.unit || "", price: r.price || 0, taxRate: r.taxRate !== undefined ? r.taxRate : 10 }];
-        if (settings0.recurringApproval) {
+        if (settings0.approvalEnabled && settings0.recurringApproval) {
           // 承認モード: 発行日の10日前に承認待ちに追加
           if (!isTodayNDaysBefore(r.billingDay || 0, 10)) continue;
           const { sub, tax, total } = totalFromItems(items);

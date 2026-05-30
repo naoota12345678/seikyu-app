@@ -1026,9 +1026,9 @@ function QuotationsList({ clients, quotations, products, deliveries, company, cl
 }
 
 // ── Home (やることリスト) ─────────────────────────────────────────────────────
-function HomePage({ clients, deliveries, invoices, balances, pendings, setPage }) {
+function HomePage({ clients, deliveries, invoices, balances, pendings, setPage, company }) {
   const overdueInv = invoices.filter(i => i.status === "unpaid" && i.dueDate && i.dueDate < today());
-  const pendingApprovals = pendings.filter(p => p.status === "pending");
+  const pendingApprovals = company?.approvalEnabled ? pendings.filter(p => p.status === "pending") : [];
   const unsentInv = invoices.filter(i => i.status === "unpaid" && (!i.sentStatus || i.sentStatus === "scheduled"));
   const unissuedDel = deliveries.filter(d => d.status === "unissued");
 
@@ -1298,8 +1298,8 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
   };
   const issueInvoice = async (d) => {
     const cl = clients.find(c => c.id === d.clientId);
-    if (!confirm(`${cl?.name || "—"} の請求書（¥${fmt(d.total)}）を発行しますか？${company?.invoiceApproval ? "\n承認後に発行・送信されます。" : "\n次回のcron実行時に自動送信されます。"}`)) return;
-    if (company?.invoiceApproval) {
+    if (!confirm(`${cl?.name || "—"} の請求書（¥${fmt(d.total)}）を発行しますか？${company?.approvalEnabled && company?.invoiceApproval ? "\n承認後に発行・送信されます。" : "\n次回のcron実行時に自動送信されます。"}`)) return;
+    if (company?.approvalEnabled && company?.invoiceApproval) {
       // 承認待ちに追加
       await addDoc(collection(db, "pendingBillings"), {
         type: "invoice", clientId: d.clientId, clientName: cl?.name || "",
@@ -1590,7 +1590,7 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
   const div = divisions?.find(d => d.id === docData.divisionId);
   const co = div ? { ...company, ...Object.fromEntries(Object.entries(div).filter(([,v]) => v)) } : company;
 
-  const needApproval = company?.reRequestApproval !== false;
+  const needApproval = company?.approvalEnabled && company?.reRequestApproval !== false;
   const resendEmail = async () => {
     if (!getEmails(cl).length) return alert("取引先のメールアドレスが設定されていません");
     setSending(true);
@@ -1887,7 +1887,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
         const defaultMsg = `${cl.name || ""} ${cl.honorific || "御中"}\n\nいつもお世話になっております。\n下記の請求につきまして、お支払い期日を過ぎておりますのでご確認をお願いいたします。\n\n対象請求: ${inv.docNo}\n未入金額: ¥${fmt(inv.total || 0)}\n\nお忙しいところ恐れ入りますが、ご確認のほどよろしくお願いいたします。`;
         if (!reRequestMsg) setTimeout(() => setReRequestMsg(defaultMsg), 0);
         const msg = reRequestMsg || defaultMsg;
-        const needApproval = company?.reRequestApproval !== false;
+        const needApproval = company?.approvalEnabled && company?.reRequestApproval !== false;
         const sendEmailReRequest = async () => {
           if (!getEmails(cl).length) return alert("取引先のメールアドレスが設定されていません");
           setEmailSending(true);
@@ -1950,7 +1950,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
       {stripeTarget && (() => {
         const inv = stripeTarget;
         const cl = clients.find(c => c.id === inv.clientId) || {};
-        const needApproval = company?.reRequestApproval !== false;
+        const needApproval = company?.approvalEnabled && company?.reRequestApproval !== false;
         const sendStripeInvoice = async () => {
           if (!getEmails(cl).length) return alert("取引先のメールアドレスが設定されていません");
           setStripeSending(true);
@@ -2038,7 +2038,7 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
     if (!dels.length) return alert("対象の未請求納品書がありません");
     const allItems = dels.flatMap(d => d.items || []);
     const { sub, tax, total: grandTotal } = totalFromItems(allItems);
-    if (company?.invoiceApproval) {
+    if (company?.approvalEnabled && company?.invoiceApproval) {
       await addDoc(collection(db, "pendingBillings"), {
         type: "invoice", clientId: client.id, clientName: client.name || "",
         divisionId: client.divisionId || "",
@@ -3195,7 +3195,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory, ini
         const defaultMsg = `${cl.name} ${cl.honorific || "御中"}\n\nいつもお世話になっております。\n下記の請求につきまして、お支払い期日を過ぎておりますのでご確認をお願いいたします。\n\n対象請求: ${docNos}\n未入金額: ¥${fmt(overdueTotal)}\n\nお忙しいところ恐れ入りますが、ご確認のほどよろしくお願いいたします。`;
         if (!reRequestMsg) setTimeout(() => setReRequestMsg(defaultMsg), 0);
         const msg = reRequestMsg || defaultMsg;
-        const needApproval = company?.reRequestApproval !== false;
+        const needApproval = company?.approvalEnabled && company?.reRequestApproval !== false;
         const sendEmailReRequest = async () => {
           if (!getEmails(cl).length) return alert("取引先のメールアドレスが設定されていません");
           setEmailSending(true);
@@ -3279,7 +3279,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory, ini
         const clOverdue = overdueInvoices.filter(i => i.clientId === cl.id);
         const overdueTotal = clOverdue.reduce((a, i) => a + (i.total || 0), 0);
         const docNos = clOverdue.map(i => i.docNo).join(", ");
-        const needApproval = company?.reRequestApproval !== false;
+        const needApproval = company?.approvalEnabled && company?.reRequestApproval !== false;
         const sendStripeInvoice = async () => {
           if (!getEmails(cl).length) return alert("取引先のメールアドレスが設定されていません");
           setStripeSending(true);
@@ -4891,6 +4891,14 @@ function SettingsPage({ company, setCompany, isAdmin, currentUser }) {
         <div style={{ ...s.col, gap: 12 }}>
           <div style={s.col}>
             <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+              <input type="checkbox" checked={form.approvalEnabled === true} onChange={e => { setF("approvalEnabled", e.target.checked); if (!e.target.checked) { setF("invoiceApproval", false); setF("recurringApproval", false); setF("reRequestApproval", false); } }} />
+              <span style={{ fontSize: 14, fontWeight: 700 }}>承認フローを使用する</span>
+            </label>
+            <div style={{ fontSize: 11, color: C.gray, marginTop: 4 }}>OFFにすると、すべての承認がスキップされ直接発行・送信されます</div>
+          </div>
+          {form.approvalEnabled && <>
+          <div style={s.col}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
               <input type="checkbox" checked={form.invoiceApproval === true} onChange={e => setF("invoiceApproval", e.target.checked)} />
               <span style={{ fontSize: 13 }}>請求書発行時に承認を必要とする</span>
             </label>
@@ -4910,6 +4918,7 @@ function SettingsPage({ company, setCompany, isAdmin, currentUser }) {
             </label>
             <div style={{ fontSize: 11, color: C.gray, marginTop: 4 }}>OFFにすると、残高管理から直接メール/Stripe請求を送信します</div>
           </div>
+          </>}
         </div>
       </div>
       <div style={s.card}>
@@ -5153,7 +5162,7 @@ export default function App() {
     { id: "invoices", label: "🧾 請求書一覧" },
     { id: "monthly", label: "📅 月締め管理" },
     { id: "balance", label: "💰 残高管理" },
-    { id: "pending", label: "⏳ 承認待ち" },
+    ...(company?.approvalEnabled ? [{ id: "pending", label: "⏳ 承認待ち" }] : []),
     { id: "recurring", label: "🔄 定期請求" },
     { type: "group", label: "マスタ", children: [
       { id: "clients", label: "🏢 取引先管理" },
@@ -5199,7 +5208,7 @@ export default function App() {
       </div>
       <div style={s.main}>
         <ScrollTopButton />
-        {page==="home"&&<HomePage clients={clients} deliveries={deliveries} invoices={invoices} balances={balances} pendings={pendings} setPage={setPage}/>}
+        {page==="home"&&<HomePage clients={clients} deliveries={deliveries} invoices={invoices} balances={balances} pendings={pendings} setPage={setPage} company={company}/>}
         {page==="dashboard"&&<Dashboard clients={clients} deliveries={deliveries} invoices={invoices} balances={balances}/>}
         {page==="quotations"&&<QuotationsList clients={clients} quotations={quotations} products={products} deliveries={deliveries} company={company} clientPrices={clientPrices} divisions={divisions} isAdmin={isAdmin}/>}
         {page==="deliveries"&&<DeliveriesList clients={clients} deliveries={deliveries} products={products} invoices={invoices} company={company} balances={balances} clientPrices={clientPrices} divisions={divisions} isAdmin={isAdmin}/>}
