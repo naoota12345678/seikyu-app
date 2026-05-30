@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { db, storage, auth } from "./firebase";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import {
@@ -141,18 +141,16 @@ function getNextClosingDate(closingDays) {
   return `${ny}-${pad(nmm + 1)}-${pad(day)}`;
 }
 
-function ScrollTopButton({ mainRef }) {
+function ScrollTopButton() {
   const [visible, setVisible] = useState(false);
   useEffect(() => {
-    const el = mainRef.current;
-    if (!el) return;
-    const onScroll = () => setVisible(el.scrollTop > 300);
-    el.addEventListener("scroll", onScroll);
-    return () => el.removeEventListener("scroll", onScroll);
-  }, [mainRef]);
+    const onScroll = () => setVisible(window.scrollY > 300);
+    window.addEventListener("scroll", onScroll);
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
   if (!visible) return null;
   return (
-    <button onClick={() => mainRef.current?.scrollTo({ top: 0, behavior: "smooth" })}
+    <button onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
       style={{ position: "fixed", bottom: 32, right: 32, width: 48, height: 48, borderRadius: "50%", background: C.navy, color: C.white, border: "none", cursor: "pointer", fontSize: 20, boxShadow: "0 2px 8px rgba(0,0,0,0.3)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", opacity: 0.85 }}
       onMouseOver={e => e.currentTarget.style.opacity = 1} onMouseOut={e => e.currentTarget.style.opacity = 0.85}>
       ▲
@@ -5074,7 +5072,6 @@ export default function App() {
   const [userRole, setUserRole] = useState(null); // "admin" | "staff"
   const [page, setPage] = useState("home");
   const [balanceOpenClientId, setBalanceOpenClientId] = useState(null);
-  const mainRef = useRef(null);
   const [openGroups, setOpenGroups] = useState({});
   const [clients, setClients] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
@@ -5200,8 +5197,8 @@ export default function App() {
           <button style={{ background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.7)", border: "none", borderRadius: 6, padding: "6px 12px", fontSize: 12, cursor: "pointer", width: "100%" }} onClick={() => signOut(auth)}>ログアウト</button>
         </div>
       </div>
-      <div style={s.main} ref={mainRef}>
-        <ScrollTopButton mainRef={mainRef} />
+      <div style={s.main}>
+        <ScrollTopButton />
         {page==="home"&&<HomePage clients={clients} deliveries={deliveries} invoices={invoices} balances={balances} pendings={pendings} setPage={setPage}/>}
         {page==="dashboard"&&<Dashboard clients={clients} deliveries={deliveries} invoices={invoices} balances={balances}/>}
         {page==="quotations"&&<QuotationsList clients={clients} quotations={quotations} products={products} deliveries={deliveries} company={company} clientPrices={clientPrices} divisions={divisions} isAdmin={isAdmin}/>}
