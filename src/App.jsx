@@ -1407,7 +1407,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
                   <td style={s.td}>
                     <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                       <button style={{ ...s.btn("light"), padding: "4px 8px", fontSize: 12 }} onClick={() => { setEditing(d); setShowForm(true); }}>編集</button>
-                      <button style={{ ...s.btn("light"), padding: "4px 8px", fontSize: 12 }} onClick={() => { setEditing({ ...d, id: undefined, docNo: undefined, status: undefined, date: today() }); setShowForm(true); }}>コピー</button>
+                      <button style={{ ...s.btn("light"), padding: "4px 8px", fontSize: 12 }} onClick={() => { const { id, docNo, status, invoiceId, createdAt, updatedAt, subtotal, tax, total, ...rest } = d; setEditing({ ...rest, date: today() }); setShowForm(true); }}>コピー</button>
                       <button style={{ ...s.btn("light"), padding: "4px 8px", fontSize: 12 }} onClick={() => setPrintTarget({ delivery: d, invoice: invoices.find(i => i.deliveryRef === d.docNo) })}>🖨 印刷</button>
                       {d.status === "unissued" && client?.billingType !== "closing" && client?.billingType !== "monthly" && (
                         <button style={{ ...s.btn("gold"), padding: "4px 8px", fontSize: 12 }} onClick={() => issueInvoice(d)}>請求書発行</button>
@@ -1738,6 +1738,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
   const [emailSending, setEmailSending] = useState(false);
   const [stripeTarget, setStripeTarget] = useState(null);
   const [stripeSending, setStripeSending] = useState(false);
+  const [expandedInv, setExpandedInv] = useState(null);
   const filtered = invoices.filter(i => {
     const cn = clients.find(c => c.id === i.clientId)?.name || "";
     if (!(cn.includes(search) || (i.docNo || "").includes(search))) return false;
@@ -1778,14 +1779,18 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
               const bal = balances[inv.clientId] || {};
               const overdue = inv.status === "unpaid" && inv.dueDate && inv.dueDate < today();
               const delivery = deliveries.find(d => d.docNo === inv.deliveryRef);
+              const isClosing = inv.billingType === "closing" && inv.deliveryRefs?.length > 0;
+              const isExpanded = expandedInv === inv.id;
               return (
-                <tr key={inv.id}>
-                  <td style={s.td}>{inv.docNo}</td><td style={s.td}>{inv.date}</td>
-                  <td style={s.td}>{client?.name || "—"}</td>
+                <React.Fragment key={inv.id}>
+                <tr style={isClosing ? { cursor: "pointer", background: isExpanded ? "#f8f9ff" : "transparent" } : undefined} onClick={isClosing ? () => setExpandedInv(isExpanded ? null : inv.id) : undefined}>
+                  <td style={s.td}>{isClosing && <span style={{ fontSize: 10, marginRight: 4 }}>{isExpanded ? "▼" : "▶"}</span>}{inv.docNo}</td><td style={s.td}>{inv.date}</td>
+                  <td style={s.td}>{client?.name || "—"}{isClosing && <span style={{ fontSize: 11, color: C.gray, marginLeft: 4 }}>（{inv.deliveryRefs.length}件）</span>}</td>
                   <td style={s.td}>¥{fmt(inv.total)}</td>
                   <td style={{ ...s.td, fontWeight: 700, color: (bal.currentBalance||0) > 0 ? C.red : C.green }}>¥{fmt(bal.currentBalance||0)}</td>
                   <td style={{ ...s.td, color: overdue ? C.red : "inherit" }}>{inv.dueDate}</td>
-                  <td style={s.td}><span style={{ ...s.badge(inv.status === "paid" ? "green" : overdue ? "red" : "gold"), cursor: "pointer" }} onClick={() => {
+                  <td style={s.td}><span style={{ ...s.badge(inv.status === "paid" ? "green" : overdue ? "red" : "gold"), cursor: "pointer" }} onClick={(e) => {
+                    e.stopPropagation();
                     if (inv.status === "paid") { if (confirm(`${inv.docNo} を未収に戻しますか？`)) updateDoc(doc(db, "invoices", inv.id), { status: "unpaid", paidAt: null }); }
                     else { if (confirm(`${inv.docNo} を入金済にしますか？`)) updateDoc(doc(db, "invoices", inv.id), { status: "paid", paidAt: today() }); }
                   }}>{inv.status === "paid" ? "入金済" : overdue ? "期限超過" : "未収"}</span></td>
@@ -1796,7 +1801,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
                       ? <span style={s.badge("gold")}>{inv.scheduledSendDate} 予約</span>
                       : <span style={s.badge("gray")}>未送信</span>}
                   </td>
-                  <td style={s.td}>
+                  <td style={s.td} onClick={e => e.stopPropagation()}>
                     <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                       <button style={{ ...s.btn("light"), padding: "4px 8px", fontSize: 12 }} onClick={() => setPreviewTarget(inv)}>確認</button>
                       <button style={{ ...s.btn("light"), padding: "4px 8px", fontSize: 12 }} onClick={() => setPrintTarget({ invoice: inv, delivery })}>🖨 印刷</button>
@@ -1828,6 +1833,26 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
                     </div>
                   </td>
                 </tr>
+                {isClosing && isExpanded && (() => {
+                  const refItems = typeof inv.deliveryRefItems === "string" ? JSON.parse(inv.deliveryRefItems) : (inv.deliveryRefItems || []);
+                  return inv.deliveryRefs.map((ref, ri) => {
+                    const del = deliveries.find(d => d.docNo === ref);
+                    const items = refItems[ri] || del?.items || [];
+                    const { total: delTotal } = totalFromItems(items);
+                    return (
+                      <tr key={`${inv.id}-${ri}`} style={{ background: "#f4f6fb" }}>
+                        <td style={{ ...s.td, paddingLeft: 32, fontSize: 12, color: C.gray }}>{ref}</td>
+                        <td style={{ ...s.td, fontSize: 12, color: C.gray }}>{del?.date || "—"}</td>
+                        <td colSpan={2} style={{ ...s.td, fontSize: 12, color: C.gray }}>
+                          {items.map(it => it.name).filter(Boolean).join("、") || "—"}
+                        </td>
+                        <td style={{ ...s.td, fontSize: 12, textAlign: "right", color: C.navy }}>¥{fmt(delTotal)}</td>
+                        <td colSpan={4} style={s.td}></td>
+                      </tr>
+                    );
+                  });
+                })()}
+                </React.Fragment>
               );
             })}
           </tbody>
@@ -2150,6 +2175,42 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
         );
       })}
       {!closingClients.length && <div style={{ ...s.card, color: C.gray, textAlign: "center" }}>締日設定のある取引先がありません（取引先管理で「締日請求」に変更してください）</div>}
+      {/* B: 期間外の未請求納品書 */}
+      {(() => {
+        const orphans = closingClients.flatMap(client => {
+          const cDays = client.closingDays && client.closingDays.length ? client.closingDays : [0];
+          const periods = getAllClosingPeriods(month, cDays);
+          const unissued = deliveries.filter(d =>
+            d.clientId === client.id && d.status === "unissued" &&
+            !periods.some(p => d.date >= p.start && d.date <= p.end)
+          );
+          return unissued.map(d => ({ ...d, clientName: client.name }));
+        });
+        if (!orphans.length) return null;
+        return (
+          <div style={{ ...s.card, border: "2px solid #e67e22", background: "#fef9f3" }}>
+            <div style={{ fontWeight: 700, color: "#e67e22", marginBottom: 8 }}>
+              期間外の未請求納品書（{orphans.length}件）
+            </div>
+            <div style={{ fontSize: 12, color: C.gray, marginBottom: 12 }}>
+              選択月の締日期間に含まれない未請求の納品書です。請求方式や締日の変更により取り残された可能性があります。該当月を選択して請求書を発行してください。
+            </div>
+            <table style={s.table}>
+              <thead><tr><th style={s.th}>取引先</th><th style={s.th}>伝票番号</th><th style={s.th}>日付</th><th style={s.th}>金額</th></tr></thead>
+              <tbody>
+                {orphans.map(d => (
+                  <tr key={d.id}>
+                    <td style={s.td}>{d.clientName}</td>
+                    <td style={s.td}>{d.docNo}</td>
+                    <td style={s.td}>{d.date}</td>
+                    <td style={s.td}>¥{fmt(d.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
       {printTarget && <PrintModeModal invoice={printTarget.invoice} delivery={null}
         clients={clients} company={company} balances={balances} divisions={divisions} onClose={() => setPrintTarget(null)} />}
     </div>
@@ -3369,7 +3430,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory, ini
 }
 
 // ── Clients ───────────────────────────────────────────────────────────────────
-function ClientsPage({ clients, divisions, isAdmin }) {
+function ClientsPage({ clients, divisions, isAdmin, deliveries }) {
   const [form, setForm] = useState({ name: "", kana: "", address: "", tel: "", email: "", email2: "", email3: "", email4: "", billingType: "immediate", closingDays: [], sendMode: "auto", isOneTime: false, divisionId: "" });
   const [editing, setEditing] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -3380,6 +3441,20 @@ function ClientsPage({ clients, divisions, isAdmin }) {
   const setF = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const save = async () => {
     if (!form.name) return alert("取引先名を入力してください");
+    // A: 請求方式変更時の未請求納品書チェック
+    if (editing) {
+      const oldType = editing.billingType || "immediate";
+      const newType = form.billingType || "immediate";
+      const oldDays = JSON.stringify(editing.closingDays || []);
+      const newDays = JSON.stringify((Array.isArray(form.closingDays) ? form.closingDays : []).map(Number));
+      if (oldType !== newType || (newType === "closing" && oldDays !== newDays)) {
+        const unissued = (deliveries || []).filter(d => d.clientId === editing.id && d.status === "unissued");
+        if (unissued.length > 0) {
+          const ok = confirm(`この取引先には未請求の納品書が ${unissued.length} 件あります。\n請求方式を変更すると、これらの納品書が次回の自動請求に含まれない場合があります。\n\n月締め画面から手動で請求書を発行できます。\n\n変更を続けますか？`);
+          if (!ok) return;
+        }
+      }
+    }
     const data = { ...form, closingDays: Array.isArray(form.closingDays) ? form.closingDays.map(Number) : [], updatedAt: serverTimestamp() };
     if (editing) await updateDoc(doc(db, "clients", editing.id), data);
     else { data.createdAt = serverTimestamp(); await addDoc(collection(db, "clients"), data); }
@@ -5217,7 +5292,7 @@ export default function App() {
         {page==="sales"&&<SalesPage clients={clients} invoices={invoices} divisions={divisions} externalSales={externalSales}/>}
         {page==="salesReport"&&<SalesReportPage clients={clients} invoices={invoices} externalSales={externalSales}/>}
         {page==="balance"&&<BalancePage clients={clients} invoices={invoices} balances={balances} company={company} paymentHistory={paymentHistory} initialOpenClientId={balanceOpenClientId} clearInitialOpenClientId={() => setBalanceOpenClientId(null)}/>}
-        {page==="clients"&&<ClientsPage clients={clients} divisions={divisions} isAdmin={isAdmin}/>}
+        {page==="clients"&&<ClientsPage clients={clients} divisions={divisions} isAdmin={isAdmin} deliveries={deliveries}/>}
         {page==="products"&&<ProductsPage products={products} company={company} isAdmin={isAdmin}/>}
         {page==="clientPrices"&&<ClientPricesPage clients={clients} products={products} clientPrices={clientPrices} isAdmin={isAdmin}/>}
         {page==="recurring"&&<RecurringPage clients={clients} divisions={divisions} invoices={invoices} company={company} balances={balances} isAdmin={isAdmin}/>}
