@@ -190,6 +190,22 @@ export default async function handler(req, res) {
     const settingsSnap0 = await db.collection("settings").limit(1).get();
     const settings0 = settingsSnap0.empty ? {} : settingsSnap0.docs[0].data();
 
+    // 0. 承認OFFなのにpending_approvalの納品書があれば戻す
+    if (!settings0.approvalEnabled) {
+      const stuckSnap = await db.collection("deliveries").where("status", "==", "pending_approval").get();
+      if (stuckSnap.size > 0) {
+        const batch0 = db.batch();
+        stuckSnap.docs.forEach(d => batch0.update(d.ref, { status: "unissued" }));
+        await batch0.commit();
+        // 対応するpending承認待ちも削除
+        const pbSnap = await db.collection("pendingBillings").where("status", "==", "pending").get();
+        const batch0b = db.batch();
+        pbSnap.docs.forEach(d => batch0b.delete(d.ref));
+        if (pbSnap.size > 0) await batch0b.commit();
+        results.cleanup = { deliveries: stuckSnap.size, pendings: pbSnap.size };
+      }
+    }
+
     // 1. 締日処理
     const clientsSnap = await db.collection("clients").get();
     const closingClients = clientsSnap.docs.filter(d => {

@@ -5032,6 +5032,27 @@ function SettingsPage({ company, setCompany, isAdmin, currentUser }) {
     // reRequestApprovalが未設定の場合は明示的にtrueを設定
     const saveData = { ...form };
     if (saveData.reRequestApproval === undefined) saveData.reRequestApproval = true;
+    // 承認をOFFにした場合、残っているpending承認待ちを処理
+    const wasEnabled = company?.approvalEnabled === true;
+    const nowDisabled = saveData.approvalEnabled !== true;
+    if (wasEnabled && nowDisabled) {
+      const pbSnap = await getDocs(query(collection(db, "pendingBillings"), where("status", "==", "pending")));
+      const pendingCount = pbSnap.size;
+      if (pendingCount > 0) {
+        const action = confirm(`承認待ちが ${pendingCount} 件あります。\n\n「OK」→ 承認待ちを削除し、納品書を未請求に戻します（月締め画面から再発行できます）\n「キャンセル」→ 承認設定の変更を中止`);
+        if (!action) return;
+        // pending承認待ちを削除し、関連する納品書をunissuedに戻す
+        for (const pbDoc of pbSnap.docs) {
+          const p = pbDoc.data();
+          const delIds = p.deliveryIds ? (Array.isArray(p.deliveryIds) ? p.deliveryIds : [p.deliveryIds]) : [];
+          for (const did of delIds) {
+            try { await updateDoc(doc(db, "deliveries", did), { status: "unissued" }); } catch (e) { /* skip */ }
+          }
+          await deleteDoc(doc(db, "pendingBillings", pbDoc.id));
+        }
+        alert(`${pendingCount} 件の承認待ちを削除し、納品書を未請求に戻しました。\n月締め画面から請求書を発行してください。`);
+      }
+    }
     const existing = await getDocs(collection(db,"settings"));
     if (existing.empty) await addDoc(collection(db,"settings"),{...saveData,updatedAt:serverTimestamp()});
     else await updateDoc(doc(db,"settings",existing.docs[0].id),{...saveData,updatedAt:serverTimestamp()});
