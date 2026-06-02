@@ -1169,7 +1169,7 @@ function Dashboard({ clients, deliveries, invoices, balances }) {
           { label: "取引先数", value: clients.length + " 社", color: C.navy },
           { label: "今月の納品数", value: monthDel.length + " 件", color: C.gold },
           { label: "今月の売上", value: "¥" + fmt(monthSales), color: C.navy },
-          { label: "未収残高合計", value: "¥" + fmt(totalBalance), color: totalBalance > 0 ? C.red : C.green },
+          { label: "売掛金残高", value: "¥" + fmt(totalBalance), color: totalBalance > 0 ? C.red : C.green },
           { label: "期限超過", value: overdue.length + " 件", color: overdue.length > 0 ? C.red : C.green },
         ].map(st => (
           <div key={st.label} style={{ ...s.card, flex: "1 1 160px", textAlign: "center", margin: 0 }}>
@@ -1768,7 +1768,17 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
         <span style={{fontSize:13,color:C.gray}}>〜</span>
         <input type="date" style={{...s.input,width:150}} value={dateTo} onChange={e=>setDateTo(e.target.value)} />
         {(dateFrom||dateTo) && <button style={{...s.btn("light"),padding:"4px 10px",fontSize:12}} onClick={()=>{setDateFrom("");setDateTo("");}}>クリア</button>}
-        <div style={{ fontSize: 15, fontWeight: 700, color: C.red, marginLeft: "auto" }}>未収残高合計：¥{fmt(totalBal)}</div>
+        <div style={{ marginLeft: "auto", textAlign: "right" }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: C.navy }}>売掛金残高：¥{fmt(totalBal)}</div>
+          {(() => {
+            const unpaid = invoices.filter(i => i.status === "unpaid" && i.dueDate);
+            const byMonth = {};
+            unpaid.forEach(i => { const m = (i.dueDate || "").slice(0, 7); if (m) { byMonth[m] = (byMonth[m] || 0) + (i.total || 0); } });
+            const months = Object.keys(byMonth).sort().slice(0, 3);
+            if (!months.length) return null;
+            return <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>{months.map(m => `${Number(m.split("-")[1])}月回収予定 ¥${fmt(byMonth[m])}`).join("　")}</div>;
+          })()}
+        </div>
       </div>
       <div style={s.card}>
         <table style={s.table}>
@@ -2823,6 +2833,16 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
   const prevData = prevIdx >= 0 ? monthlyData[prevIdx] : null;
   const growth = prevData && prevData.grandTotal > 0 ? ((curGrand - prevData.grandTotal) / prevData.grandTotal * 100).toFixed(1) : null;
 
+  // 前年対比
+  const lastYearMonth = (() => {
+    const [y, m] = viewMonth.split("-").map(Number);
+    return `${y - 1}-${String(m).padStart(2, "0")}`;
+  })();
+  const lastYearInvTotal = invoices.filter(i => (i.date || "").startsWith(lastYearMonth)).reduce((a, i) => a + (i.total || 0), 0);
+  const lastYearExtTotal = externalSales.filter(e => (e.date || "").startsWith(lastYearMonth)).reduce((a, e) => a + (e.totalAmount || 0), 0);
+  const lastYearTotal = lastYearInvTotal + lastYearExtTotal;
+  const yoyGrowth = lastYearTotal > 0 ? ((curGrand - lastYearTotal) / lastYearTotal * 100).toFixed(1) : null;
+
   // ── 事業部別集計（請求書＋外部売上） ──
   const divSales = {};
   const mInvs = invoices.filter(i => (i.date || "").startsWith(viewMonth));
@@ -2936,6 +2956,7 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
         <div style={{ ...s.card, flex: "0 0 auto", margin: 0, display: "flex", flexDirection: "column", justifyContent: "center", gap: 6, padding: "10px 16px" }}>
           <div style={{ whiteSpace: "nowrap", fontSize: 12 }}><span style={{ color: C.gray }}>総件数</span> <span style={{ fontWeight: 700, color: C.navy }}>{curCount} 件</span></div>
           <div style={{ whiteSpace: "nowrap", fontSize: 12 }}><span style={{ color: C.gray }}>前月比</span> <span style={{ fontWeight: 700, color: growth > 0 ? C.green : growth < 0 ? C.red : C.gray }}>{growth !== null ? (growth > 0 ? "+" : "") + growth + "%" : "—"}</span></div>
+          <div style={{ whiteSpace: "nowrap", fontSize: 12 }}><span style={{ color: C.gray }}>前年比</span> <span style={{ fontWeight: 700, color: yoyGrowth > 0 ? C.green : yoyGrowth < 0 ? C.red : C.gray }}>{yoyGrowth !== null ? (yoyGrowth > 0 ? "+" : "") + yoyGrowth + "%" : "—"}</span></div>
         </div>
         <div style={{ ...s.card, flex: "1 1 140px", textAlign: "center", margin: 0 }}>
           <div style={{ fontSize: 12, color: C.gray, marginBottom: 6 }}>卸</div>
@@ -3267,7 +3288,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory, ini
       {/* サマリー */}
       <div style={{ display: "flex", gap: 16, marginBottom: 20, flexWrap: "wrap" }}>
         {[
-          { label: "未収残高合計", value: "¥" + fmt(total), color: total > 0 ? C.red : C.green },
+          { label: "売掛金残高", value: "¥" + fmt(total), color: total > 0 ? C.red : C.green },
           { label: "未入金アラート", value: overdueInvoices.length + " 件", color: overdueInvoices.length > 0 ? C.red : C.green },
           { label: "対象取引先", value: overdueClientIds.length + " 社", color: overdueClientIds.length > 0 ? C.red : C.green },
           { label: "残高あり取引先", value: clientList.filter(c => c.hasBalance).length + " 社", color: C.navy },
