@@ -2391,6 +2391,162 @@ function SalesReportPage({ clients, invoices, externalSales }) {
   );
 }
 
+// ── Yearly Transition Page ────────────────────────────────────────────────────
+function YearlyTransitionPage({ clients, invoices, divisions, externalSales }) {
+  const [startMonth, setStartMonth] = useState(1); // 期首月
+  const [expandedCell, setExpandedCell] = useState(null); // "2026-03" etc
+  const sources = [...new Set(externalSales.map(e => e.source))].sort();
+  const sourceLabel = (src) => src === "csv" ? "店舗売上" : src === "rakuten" ? "楽天" : src === "amazon" ? "Amazon" : src === "colorme" ? "カラーミー" : src;
+
+  // 全データから年の範囲を取得
+  const allDates = [...invoices.map(i => i.date || ""), ...externalSales.map(e => e.date || "")].filter(Boolean);
+  const allYears = [...new Set(allDates.map(d => Number(d.slice(0, 4))))].filter(Boolean).sort();
+  if (!allYears.length) return <div><div style={s.pageTitle}>年度別売上推移</div><div style={{...s.card,color:C.gray,textAlign:"center"}}>データがありません</div></div>;
+
+  // 期首月に基づく年度リストを生成
+  const getFiscalYear = (dateStr) => {
+    const y = Number(dateStr.slice(0, 4)), m = Number(dateStr.slice(5, 7));
+    return m >= startMonth ? y : y - 1;
+  };
+  const fiscalYears = [...new Set([...allDates.map(d => getFiscalYear(d))])].filter(Boolean).sort();
+
+  // 年度の月リスト（期首月から12ヶ月）
+  const monthCols = Array.from({ length: 12 }, (_, i) => ((startMonth - 1 + i) % 12) + 1);
+
+  // 年度ごと・月ごとの集計
+  const getYearMonth = (fy, monthNum) => {
+    const y = monthNum >= startMonth ? fy : fy + 1;
+    return `${y}-${String(monthNum).padStart(2, "0")}`;
+  };
+
+  const calcMonth = (ym) => {
+    const mInvs = invoices.filter(i => (i.date || "").startsWith(ym));
+    const invTotal = mInvs.reduce((a, i) => a + (i.total || 0), 0);
+    const ext = {};
+    sources.forEach(src => {
+      ext[src] = externalSales.filter(e => e.source === src && (e.date || "").startsWith(ym)).reduce((a, e) => a + (e.totalAmount || 0), 0);
+    });
+    const extTotal = Object.values(ext).reduce((a, v) => a + v, 0);
+    return { invTotal, ext, grandTotal: invTotal + extTotal };
+  };
+
+  const rows = fiscalYears.map(fy => {
+    const label = startMonth === 1 ? `${fy}年` : `${fy}年度（${startMonth}月～）`;
+    const months = monthCols.map(mc => {
+      const ym = getYearMonth(fy, mc);
+      return { mc, ym, ...calcMonth(ym) };
+    });
+    const yearTotal = months.reduce((a, m) => a + m.grandTotal, 0);
+    return { fy, label, months, yearTotal };
+  });
+
+  // 内訳表示
+  const renderBreakdown = (ym) => {
+    const mInvs = invoices.filter(i => (i.date || "").startsWith(ym));
+    const byClient = {};
+    mInvs.forEach(inv => {
+      const cid = inv.clientId;
+      if (!byClient[cid]) byClient[cid] = { name: clients.find(c => c.id === cid)?.name || "—", total: 0, count: 0 };
+      byClient[cid].total += (inv.total || 0);
+      byClient[cid].count++;
+    });
+    const clientRows = Object.values(byClient).sort((a, b) => b.total - a.total);
+    const extRows = sources.map(src => {
+      const amt = externalSales.filter(e => e.source === src && (e.date || "").startsWith(ym)).reduce((a, e) => a + (e.totalAmount || 0), 0);
+      return { name: sourceLabel(src), total: amt };
+    }).filter(r => r.total > 0);
+    return (
+      <tr key={`detail-${ym}`}><td colSpan={monthCols.length + 2} style={{ padding: 0 }}>
+        <div style={{ background: "#f8f9ff", padding: "12px 20px", borderTop: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ fontWeight: 700, color: C.navy, marginBottom: 8 }}>{ym.replace("-", "年")}月 内訳</div>
+          <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+            {clientRows.length > 0 && (
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: C.gray, marginBottom: 4 }}>卸売上</div>
+                {clientRows.map((r, i) => <div key={i} style={{ fontSize: 12, display: "flex", justifyContent: "space-between", gap: 16 }}><span>{r.name}（{r.count}件）</span><span style={{ fontWeight: 600 }}>¥{fmt(r.total)}</span></div>)}
+              </div>
+            )}
+            {extRows.length > 0 && (
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: C.gray, marginBottom: 4 }}>EC・店舗売上</div>
+                {extRows.map((r, i) => <div key={i} style={{ fontSize: 12, display: "flex", justifyContent: "space-between", gap: 16 }}><span>{r.name}</span><span style={{ fontWeight: 600 }}>¥{fmt(r.total)}</span></div>)}
+              </div>
+            )}
+          </div>
+        </div>
+      </td></tr>
+    );
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
+        <div style={s.pageTitle}>年度別売上推移</div>
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <span style={{ fontSize: 13, color: C.gray }}>期首月：</span>
+          <select style={{ ...s.select, width: 100 }} value={startMonth} onChange={e => { setStartMonth(Number(e.target.value)); setExpandedCell(null); }}>
+            {Array.from({ length: 12 }, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}月</option>)}
+          </select>
+          <button style={s.btn("light")} onClick={() => window.print()}>🖨 印刷</button>
+        </div>
+      </div>
+      <div style={s.card} className="print-area">
+        <style>{`@media print { body * { visibility: hidden; } .print-area, .print-area * { visibility: visible; } .print-area { position: absolute; left: 0; top: 0; width: 100%; } .no-print { display: none !important; } }`}</style>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ ...s.table, fontSize: 13, minWidth: 900 }}>
+            <thead>
+              <tr>
+                <th style={{ ...s.th, position: "sticky", left: 0, background: C.navy, color: "white", zIndex: 2, minWidth: 120 }}>年度</th>
+                {monthCols.map(mc => <th key={mc} style={{ ...s.th, textAlign: "right", minWidth: 80 }}>{mc}月</th>)}
+                <th style={{ ...s.th, textAlign: "right", minWidth: 100, background: "#e8eaf0" }}>年計</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...rows].reverse().map(row => (
+                <React.Fragment key={row.fy}>
+                  <tr>
+                    <td style={{ ...s.td, fontWeight: 700, color: C.navy, position: "sticky", left: 0, background: "white", zIndex: 1 }}>{row.label}</td>
+                    {row.months.map(m => {
+                      const isExpanded = expandedCell === m.ym;
+                      return (
+                        <td key={m.mc} style={{ ...s.td, textAlign: "right", cursor: m.grandTotal > 0 ? "pointer" : "default", background: isExpanded ? "#f0f4ff" : m.grandTotal > 0 ? "transparent" : "#fafafa", fontWeight: m.grandTotal > 0 ? 500 : 400, color: m.grandTotal > 0 ? C.navy : C.gray }}
+                          onClick={() => m.grandTotal > 0 && setExpandedCell(isExpanded ? null : m.ym)}>
+                          {m.grandTotal > 0 ? `¥${fmt(m.grandTotal)}` : "—"}
+                        </td>
+                      );
+                    })}
+                    <td style={{ ...s.td, textAlign: "right", fontWeight: 700, color: C.navy, background: "#f4f5f8" }}>¥{fmt(row.yearTotal)}</td>
+                  </tr>
+                  {expandedCell && row.months.some(m => m.ym === expandedCell) && renderBreakdown(expandedCell)}
+                </React.Fragment>
+              ))}
+              {rows.length > 1 && (() => {
+                const latest = rows[rows.length - 1];
+                const prev = rows[rows.length - 2];
+                return (
+                  <tr style={{ borderTop: `2px solid ${C.navy}` }}>
+                    <td style={{ ...s.td, fontWeight: 700, fontSize: 12, color: C.gray, position: "sticky", left: 0, background: "white", zIndex: 1 }}>前年比</td>
+                    {monthCols.map((mc, i) => {
+                      const cur = latest.months[i].grandTotal;
+                      const prv = prev.months[i].grandTotal;
+                      const ratio = prv > 0 ? ((cur / prv) * 100).toFixed(0) : cur > 0 ? "—" : "—";
+                      const color = prv > 0 ? (cur >= prv ? C.green : C.red) : C.gray;
+                      return <td key={mc} style={{ ...s.td, textAlign: "right", fontSize: 12, color, fontWeight: 600 }}>{prv > 0 ? `${ratio}%` : "—"}</td>;
+                    })}
+                    <td style={{ ...s.td, textAlign: "right", fontSize: 12, fontWeight: 700, color: prev.yearTotal > 0 ? (latest.yearTotal >= prev.yearTotal ? C.green : C.red) : C.gray, background: "#f4f5f8" }}>
+                      {prev.yearTotal > 0 ? `${((latest.yearTotal / prev.yearTotal) * 100).toFixed(0)}%` : "—"}
+                    </td>
+                  </tr>
+                );
+              })()}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Sales Page ────────────────────────────────────────────────────────────────
 function SalesPage({ clients, invoices, divisions, externalSales }) {
   const [viewMonth, setViewMonth] = useState(today().slice(0, 7));
@@ -5232,6 +5388,7 @@ export default function App() {
     { id: "dashboard", label: "📊 売上概況" },
     { id: "sales", label: "📈 売上管理" },
     { id: "salesReport", label: "📋 売上合計資料" },
+    { id: "yearlyTransition", label: "📊 年度別売上推移" },
     { id: "quotations", label: "📝 見積書一覧" },
     { id: "deliveries", label: "📦 納品書一覧" },
     { id: "invoices", label: "🧾 請求書一覧" },
@@ -5291,6 +5448,7 @@ export default function App() {
         {page==="monthly"&&<MonthlyBilling clients={clients} deliveries={deliveries} invoices={invoices} company={company} balances={balances} divisions={divisions}/>}
         {page==="sales"&&<SalesPage clients={clients} invoices={invoices} divisions={divisions} externalSales={externalSales}/>}
         {page==="salesReport"&&<SalesReportPage clients={clients} invoices={invoices} externalSales={externalSales}/>}
+        {page==="yearlyTransition"&&<YearlyTransitionPage clients={clients} invoices={invoices} divisions={divisions} externalSales={externalSales}/>}
         {page==="balance"&&<BalancePage clients={clients} invoices={invoices} balances={balances} company={company} paymentHistory={paymentHistory} initialOpenClientId={balanceOpenClientId} clearInitialOpenClientId={() => setBalanceOpenClientId(null)}/>}
         {page==="clients"&&<ClientsPage clients={clients} divisions={divisions} isAdmin={isAdmin} deliveries={deliveries}/>}
         {page==="products"&&<ProductsPage products={products} company={company} isAdmin={isAdmin}/>}
