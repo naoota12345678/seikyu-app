@@ -370,11 +370,35 @@ function buildDeliveryHTML(d, clients, co) {
     "下記の通り納品いたします", d.items || [], false, false, d.notes, false, null, null);
 }
 
-function buildInvoiceHTML(inv, clients, co) {
+function buildInvoiceHTML(inv, clients, co, bal) {
   const cl = clients.find(c => c.id === inv.clientId) || {};
-  return buildDocBody("請　求　書", cl, co,
-    `請求番号：${inv.docNo}　　請求日：${inv.date}　　支払期限：${inv.dueDate || ""}`,
-    "下記の通り御請求申し上げます", inv.items || [], true, true, null, false, null, null);
+  const allItems = inv.items || [];
+  const { sub, tax } = totalFromItems(allItems);
+  const prev = bal?.prevBalance || 0;
+  const paid = bal?.paidAmount || 0;
+  const carry = prev - paid;
+  const total = carry + sub + tax;
+  const summaryHTML = `<table class="bt"><thead><tr>
+    <th>前回御請求額</th><th>御入金額</th><th>繰越金額</th><th>今回御買上額</th><th>消費税</th><th>今回御請求額</th>
+  </tr></thead><tbody><tr>
+    <td>${fmt(prev)}</td><td>${fmt(paid)}</td><td>${fmt(carry)}</td>
+    <td>${fmt(sub)}</td><td>${fmt(tax)}</td>
+    <td class="total-cell">${fmt(total)}</td>
+  </tr></tbody></table>`;
+  return `<h1>請　求　書</h1>
+  <div class="doc-info"><span>請求番号：${inv.docNo}　　請求日：${inv.date}　　支払期限：${inv.dueDate || ""}</span></div>
+  <div class="hd">
+    <div class="cl-info">
+      ${cl.zip ? `<div class="cl-zip">${cl.zip}</div>` : ""}
+      <div class="cl-addr">${cl.address || ""}</div>
+      <div class="cn">${cl.name || ""} ${cl.honorific || "御中"}</div>
+    </div>
+    ${coBlock(co, null, true)}
+  </div>
+  <p class="greeting">下記の通り御請求申し上げます</p>
+  ${summaryHTML}
+  ${detailTableHTML(allItems, false, null, null)}
+  ${bankFooterHTML(co)}`;
 }
 
 function buildMeisaiHTML(inv, clients, co, bal) {
@@ -420,12 +444,12 @@ function printDelivery(d, clients, co) {
   openPrint(docHTML("納品書", buildDeliveryHTML(d, clients, co)));
 }
 
-function printInvoice(inv, clients, co) {
-  openPrint(docHTML("請求書", buildInvoiceHTML(inv, clients, co)));
+function printInvoice(inv, clients, co, bal) {
+  openPrint(docHTML("請求書", buildInvoiceHTML(inv, clients, co, bal)));
 }
 
-function printCombined(d, inv, clients, co) {
-  openPrint(docHTML("納品書＋請求書", `<div class="pb">${buildDeliveryHTML(d, clients, co)}</div>${buildInvoiceHTML(inv, clients, co)}`));
+function printCombined(d, inv, clients, co, bal) {
+  openPrint(docHTML("納品書＋請求書", `<div class="pb">${buildDeliveryHTML(d, clients, co)}</div>${buildInvoiceHTML(inv, clients, co, bal)}`));
 }
 
 function printMeisai(inv, clients, co, bal) {
@@ -453,9 +477,9 @@ function PrintModeModal({ invoice, delivery, clients, company, balances, divisio
     { id: "pdf-meisai", label: "📥 請求明細書PDF", desc: "請求明細書をPDFでダウンロード", ok: !!invoice },
   ];
   const handle = (id) => {
-    if (id === "invoice") printInvoice(invoice, clients, co);
+    if (id === "invoice") printInvoice(invoice, clients, co, bal);
     else if (id === "delivery") printDelivery(delivery, clients, co);
-    else if (id === "combined") printCombined(delivery, invoice, clients, co);
+    else if (id === "combined") printCombined(delivery, invoice, clients, co, bal);
     else if (id === "meisai") printMeisai(invoice, clients, co, bal);
     onClose();
   };
@@ -466,7 +490,7 @@ function PrintModeModal({ invoice, delivery, clients, company, balances, divisio
       let result, type, storagePath;
       if (id === "pdf-invoice") {
         type = "請求書";
-        result = await generatePDF(buildInvoiceHTML(invoice, clients, co), `請求書_${safeName}_${docNo}.pdf`);
+        result = await generatePDF(buildInvoiceHTML(invoice, clients, co, bal), `請求書_${safeName}_${docNo}.pdf`);
         storagePath = `pdfs/invoices/${docNo}.pdf`;
       } else if (id === "pdf-delivery") {
         type = "納品書";
@@ -1414,7 +1438,7 @@ function SendRecordModal({ invoice, clients, company, divisions, balances, onClo
     setResult(null);
     try {
       // PDF生成
-      const invoiceHTML = buildInvoiceHTML(invoice, clients, co);
+      const invoiceHTML = buildInvoiceHTML(invoice, clients, co, bal);
       const safeName = (cl.name||"").replace(/[\\/:*?"<>|]/g,"_");
       const { blob, filename } = await generatePDF(invoiceHTML, `請求書_${safeName}_${invoice.docNo}.pdf`);
 
@@ -1571,7 +1595,8 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
       // PDFがなければ生成して保存
       if (!pdfUrl) {
         try {
-          const invoiceHTML = buildInvoiceHTML(invoice, [cl], co);
+          const rBal = balances?.[invoice.clientId];
+          const invoiceHTML = buildInvoiceHTML(invoice, [cl], co, rBal);
           const safeName = (cl.name||"").replace(/[\\/:*?"<>|]/g,"_");
           const { blob, filename } = await generatePDF(invoiceHTML, `請求書_${safeName}_${invoice.docNo}.pdf`);
           const storagePath = `pdfs/invoices/${invoice.docNo}.pdf`;
@@ -1631,7 +1656,7 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
 
   const handlePrint = () => {
     const delivery = null;
-    printInvoice(invoice, clients, co);
+    printInvoice(invoice, clients, co, balances?.[invoice?.clientId]);
     addDoc(collection(db, "sendHistory"), {
       docNo: invoice.docNo, invoiceId: invoice.id,
       clientId: invoice.clientId, clientName: cl.name || "",
