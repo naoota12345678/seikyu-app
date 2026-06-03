@@ -214,7 +214,7 @@ table{width:100%;border-collapse:collapse;margin:0 0 8px}
 .it th{background:${HC};color:#111;border:1px solid #999;padding:4px 6px;text-align:center;font-size:10px;font-weight:bold}
 .it td{border:1px solid #999;padding:3px 6px;font-size:11px;height:20px}
 .nr{text-align:right}
-.tax-label{font-size:9px;color:#555}
+.tax-label{font-size:9px;color:#555;white-space:nowrap}
 .tr td{font-weight:bold;border:1px solid #999}
 .bb{margin-top:10px;font-size:11px;line-height:1.8}
 .pb{page-break-after:always}
@@ -270,7 +270,7 @@ function detailTableHTML(items, hasDateCol, refs, refItems) {
   const emptyRows = Array(emptyCount).fill(`<tr>${Array(emptyCols).fill("<td></td>").join("")}</tr>`);
   const thDate = hasDateCol ? `<th style="width:14%">日付/伝票番号</th>` : "";
   return `<table class="it"><thead><tr>
-    ${thDate}<th style="width:${hasDateCol ? "30" : "38"}%">商品コード/商品名</th><th style="width:8%">数量</th><th style="width:7%">単位</th><th style="width:12%">単　価</th><th style="width:6%"></th><th style="width:${hasDateCol ? "14" : "16"}%">金　額</th>
+    ${thDate}<th style="width:${hasDateCol ? "28" : "34"}%">商品コード/商品名</th><th style="width:7%">数量</th><th style="width:6%">単位</th><th style="width:12%">単　価</th><th style="width:9%"></th><th style="width:${hasDateCol ? "14" : "16"}%">金　額</th>
   </tr></thead><tbody>
     ${dataRows.join("")}${emptyRows.join("")}${taxRows.join("")}
   </tbody></table>`;
