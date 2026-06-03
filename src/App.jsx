@@ -194,69 +194,105 @@ const s = {
 };
 
 // ── Print ──────────────────────────────────────────────────────────────────────
-const baseCSS = `body{font-family:'MS PGothic',sans-serif;margin:0;padding:28px;font-size:12px;color:#111}
-h1{text-align:center;font-size:20px;letter-spacing:6px;margin:0 0 20px;padding:4px 0;border:2px solid #333}
-.hd{display:flex;justify-content:space-between;margin-bottom:16px}
-.cn{font-size:22.5px;font-weight:bold;border-bottom:2px solid #1C2B4A;padding-bottom:3px;display:inline-block}
-.co{text-align:left;font-size:11px;line-height:1.9;position:relative}
-.kakuin{position:absolute;right:-50px;top:-60px;width:160px;height:160px;opacity:0.7;pointer-events:none}
-.stamp-area{display:flex;justify-content:flex-end;margin-top:8px;gap:0}
-.stamp-box{width:42px;height:42px;border:1.5px solid #333;margin:0;padding:0;display:block}.stamp-box+.stamp-box{border-left:none;margin-left:-1.5px}
-.meta{font-size:11px;margin-top:10px;line-height:1.8}
-table{width:100%;border-collapse:collapse;margin:14px 0}
-.it th{background:#1C2B4A;color:#fff;padding:6px 8px;text-align:center;font-size:11px}
-.it td{padding:6px 8px;border:1px solid #ccc;font-size:11px}
+const HC = "#c0d8ea"; // header color
+const baseCSS = `body{font-family:'MS PGothic','Hiragino Kaku Gothic Pro',sans-serif;margin:0;padding:20px 28px;font-size:12px;color:#111}
+h1{text-align:center;font-size:18px;letter-spacing:8px;margin:0 auto 14px;padding:5px 24px;border:2px solid #4a8ab5;display:table;color:#1a3a5c}
+.hd{display:flex;justify-content:space-between;margin-bottom:10px}
+.cl-info{flex:1}
+.cl-zip{font-size:12px;margin-bottom:2px}
+.cl-addr{font-size:12px;line-height:1.6}
+.cn{font-size:18px;font-weight:bold;margin:4px 0}
+.cl-code{font-size:11px;color:#555;margin-top:2px}
+.co{text-align:left;font-size:11px;line-height:1.8;position:relative;min-width:220px}
+.kakuin{position:absolute;right:-40px;top:-50px;width:140px;height:140px;opacity:0.7;pointer-events:none}
+.doc-info{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;margin-bottom:8px}
+.greeting{font-size:11px;margin:0 0 8px;text-indent:2em}
+table{width:100%;border-collapse:collapse;margin:0 0 8px}
+.bt th{background:${HC};color:#111;border:1px solid #999;padding:5px 8px;text-align:center;font-size:11px;font-weight:bold}
+.bt td{border:1px solid #999;padding:5px 8px;text-align:right;font-size:11px}
+.bt .total-cell{font-weight:bold;font-size:13px;background:#f0f6fb}
+.it th{background:${HC};color:#111;border:1px solid #999;padding:4px 6px;text-align:center;font-size:10px;font-weight:bold}
+.it td{border:1px solid #999;padding:3px 6px;font-size:11px;height:20px}
 .nr{text-align:right}
-.tr td{background:#f4f1ec;font-weight:bold}
-.tot{text-align:right;margin-top:8px}
-.bb{margin-top:16px;padding:10px 14px;background:#f4f1ec;font-size:11px;line-height:1.9}
+.tax-label{font-size:9px;color:#555}
+.tr td{font-weight:bold;border:1px solid #999}
+.bb{margin-top:10px;font-size:11px;line-height:1.8}
 .pb{page-break-after:always}
-.bt th,.bt td{border:1px solid #ccc;padding:6px 8px;text-align:right;font-size:11px}
-.bt th{background:#1C2B4A;color:#fff;text-align:center}
-@media print{*{box-sizing:border-box}body{padding:10mm;width:100%;max-width:100%}table{table-layout:fixed;word-break:break-all}.kakuin{right:0px!important}}
-.q12,.q12 body{font-size:14.4px}
-.q12 h1{font-size:24px}
-.q12 .cn{font-size:27px!important}
-.q12 .co{font-size:13.2px}
-.q12 .meta{font-size:13.2px}
-.q12 .it th,.q12 .it td{font-size:13.2px!important}
-.q12 .bb{font-size:13.2px}
-.q12 .tot td{font-size:13.2px!important}
-.q12 .hd div{font-size:13.2px}`;
+@media print{*{box-sizing:border-box}body{padding:8mm 10mm;width:100%;max-width:100%}table{table-layout:fixed;word-break:break-all}.kakuin{right:-10px!important}}`;
 
-function itemsHTML(items) {
+const DETAIL_ROWS = 18;
+
+function taxLabel(rate) {
+  const r = rate !== undefined && rate !== null && rate !== "" ? Number(rate) : 10;
+  return r === 8 ? "軽8.0%" : `課${r}.0%`;
+}
+
+function buildDetailRows(items, refs, refItems) {
+  let rows = [];
+  if (refs && refs.length > 0) {
+    refs.forEach((ref, ri) => {
+      const ritems = (refItems && refItems[ri]) || [];
+      ritems.forEach((i, ii) => {
+        const a = Number(i.qty || 0) * Number(i.price || 0);
+        rows.push(`<tr><td style="font-size:10px">${ii === 0 ? ref : ""}</td><td>${i.name || ""}</td><td class="nr">${i.qty || ""}</td><td>${i.unit || ""}</td><td class="nr">${fmt(i.price)}</td><td class="tax-label">${taxLabel(i.taxRate)}</td><td class="nr">${fmt(a)}</td></tr>`);
+      });
+    });
+  } else {
+    items.forEach(i => {
+      const a = Number(i.qty || 0) * Number(i.price || 0);
+      rows.push(`<tr><td></td><td>${i.name || ""}</td><td class="nr">${i.qty || ""}</td><td>${i.unit || ""}</td><td class="nr">${fmt(i.price)}</td><td class="tax-label">${taxLabel(i.taxRate)}</td><td class="nr">${fmt(a)}</td></tr>`);
+    });
+  }
+  return rows;
+}
+
+function buildSimpleDetailRows(items) {
+  return items.map(i => {
+    const a = Number(i.qty || 0) * Number(i.price || 0);
+    return `<tr><td>${i.name || ""}</td><td class="nr">${i.qty || ""}</td><td>${i.unit || ""}</td><td class="nr">${fmt(i.price)}</td><td class="tax-label">${taxLabel(i.taxRate)}</td><td class="nr">${fmt(a)}</td></tr>`;
+  });
+}
+
+function detailTableHTML(items, hasDateCol, refs, refItems) {
   const groups = calcTaxByRate(items);
-  const rates = Object.keys(groups).sort((a,b)=>Number(b)-Number(a));
+  const rates = Object.keys(groups).sort((a, b) => Number(b) - Number(a));
+  const dataRows = hasDateCol ? buildDetailRows(items, refs, refItems) : buildSimpleDetailRows(items);
+  const taxRows = [];
+  taxRows.push(`<tr><td colspan="${hasDateCol ? 6 : 5}">消　費　税</td><td class="nr">${fmt(totalFromItems(items).tax)}</td></tr>`);
+  rates.forEach(r => {
+    const isReduced = Number(r) === 8;
+    taxRows.push(`<tr class="tr"><td colspan="${hasDateCol ? 6 : 5}">【合計 課税${isReduced ? "(軽) " : ""}${r}.0% 税抜額】</td><td class="nr">${fmt(groups[r].sub)}</td></tr>`);
+    taxRows.push(`<tr class="tr"><td colspan="${hasDateCol ? 6 : 5}">【合計 課税${isReduced ? "(軽) " : ""}${r}.0% 消費税額】</td><td class="nr">${fmt(groups[r].tax)}</td></tr>`);
+  });
+  const totalUsed = dataRows.length + taxRows.length;
+  const emptyCount = Math.max(0, DETAIL_ROWS - totalUsed);
+  const emptyCols = hasDateCol ? 7 : 6;
+  const emptyRows = Array(emptyCount).fill(`<tr>${Array(emptyCols).fill("<td></td>").join("")}</tr>`);
+  const thDate = hasDateCol ? `<th style="width:14%">日付/伝票番号</th>` : "";
   return `<table class="it"><thead><tr>
-    <th style="width:38%">商品名</th><th style="width:9%">数量</th><th style="width:8%">単位</th>
-    <th style="width:18%">単価</th><th style="width:18%">金額</th><th style="width:9%">税率</th>
+    ${thDate}<th style="width:${hasDateCol ? "30" : "38"}%">商品コード/商品名</th><th style="width:8%">数量</th><th style="width:7%">単位</th><th style="width:12%">単　価</th><th style="width:6%"></th><th style="width:${hasDateCol ? "14" : "16"}%">金　額</th>
   </tr></thead><tbody>
-  ${items.map(i=>{const a=Number(i.qty||0)*Number(i.price||0);const r=i.taxRate!==undefined&&i.taxRate!==null&&i.taxRate!==""?Number(i.taxRate):10;return`<tr><td>${i.name||""}</td><td class="nr">${i.qty||""}</td><td>${i.unit||""}</td><td class="nr">¥${fmt(i.price)}</td><td class="nr">¥${fmt(a)}</td><td style="font-size:10px;color:#555">課${r}%</td></tr>`}).join("")}
-  ${rates.map(r=>`<tr class="tr"><td colspan="4">【課税${r}% 税抜額】</td><td class="nr" colspan="2">¥${fmt(groups[r].sub)}</td></tr>
-  <tr class="tr"><td colspan="4">【課税${r}% 消費税額】</td><td class="nr" colspan="2">¥${fmt(groups[r].tax)}</td></tr>`).join("")}
+    ${dataRows.join("")}${emptyRows.join("")}${taxRows.join("")}
   </tbody></table>`;
 }
 
-function footerHTML(items, bank) {
-  const { sub, tax, total } = totalFromItems(items);
-  return `<div class="tot"><table style="margin-left:auto;border-collapse:collapse">
-  <tr><td style="padding:4px 12px;border:1px solid #ccc">税抜額</td><td style="padding:4px 16px;border:1px solid #ccc;text-align:right;font-weight:bold">¥${fmt(sub)}</td>
-  <td style="padding:4px 12px;border:1px solid #ccc">消費税額</td><td style="padding:4px 16px;border:1px solid #ccc;text-align:right;font-weight:bold">¥${fmt(tax)}</td>
-  <td style="padding:4px 12px;background:#1C2B4A;color:#fff;font-weight:bold">合計</td>
-  <td style="padding:4px 20px;border:2px solid #1C2B4A;text-align:right;font-size:16px;font-weight:bold;color:#1C2B4A">¥${fmt(total)}</td></tr>
-  </table></div>
-  ${bank?`<div class="bb">振込先口座：${bank.bankName||""}　${bank.bankBranch||""}　${bank.bankType||"普通"}　${bank.bankNo||""}<br>口座名義：${bank.bankHolder||""}<br>※振込手数料はご負担下さいますようお願い致します。</div>`:""}`;
+function bankFooterHTML(co) {
+  if (!co?.bankName) return "";
+  return `<div class="bb">振込専用口座　${co.bankName}　${co.bankBranch}　${co.bankType || "普通"}　${co.bankNo}　${co.bankHolder || ""}<br>お支払期日：翌月末日　　※誠に恐れ入りますが、お振込手数料はご負担下さいますようお願い致します。</div>`;
 }
 
-function coBlock(c,doc_,showReg){
+function coBlock(c, doc_, showReg) {
   const origin = typeof window !== "undefined" ? window.location.origin : "";
-  return `<div class="co"><strong>${c.name||""}</strong><br>${c.address||""}<br>TEL ${c.tel||""}　FAX ${c.fax||""}<br>${showReg&&c.registrationNo?`登録番号　${c.registrationNo}`:""}
-  <img class="kakuin" src="${origin}/kakuin.png" />
-  <div class="stamp-area"><div class="stamp-box"></div><div class="stamp-box"></div></div></div>`;
+  return `<div class="co">${c.zip ? `${c.zip}<br>` : ""}${c.address || ""}<br><strong>${c.name || ""}</strong><br>TEL ${c.tel || ""}　FAX ${c.fax || ""}${showReg && c.registrationNo ? `<br>登録番号：${c.registrationNo}` : ""}
+  <img class="kakuin" src="${origin}/kakuin.png" /></div>`;
 }
 
-function openPrint(html){
-  const w=window.open("","_blank");w.document.write(html);w.document.close();setTimeout(()=>w.print(),600);
+function docHTML(title, bodyHTML) {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${baseCSS}</style></head><body>${bodyHTML}</body></html>`;
+}
+
+function openPrint(html) {
+  const w = window.open("", "_blank"); w.document.write(html); w.document.close(); setTimeout(() => w.print(), 600);
 }
 
 async function generatePDF(html, filename) {
@@ -303,31 +339,42 @@ async function savePDFToStorage(blob, path) {
   return await getDownloadURL(storageRef);
 }
 
+function buildDocBody(title, cl, co, meta, greeting, items, showReg, bank, notes, hasDateCol, refs, refItems) {
+  return `<h1>${title}</h1>
+  <div class="doc-info"><span>${meta}</span></div>
+  <div class="hd">
+    <div class="cl-info">
+      ${cl.zip ? `<div class="cl-zip">${cl.zip}</div>` : ""}
+      <div class="cl-addr">${cl.address || ""}</div>
+      <div class="cn">${cl.name || ""} ${cl.honorific || "御中"}</div>
+    </div>
+    ${coBlock(co, null, showReg)}
+  </div>
+  <p class="greeting">${greeting}</p>
+  ${detailTableHTML(items, hasDateCol, refs, refItems)}
+  ${bank ? bankFooterHTML(co) : ""}
+  ${notes ? `<div style="margin-top:8px;font-size:11px;color:#555">備考：${notes}</div>` : ""}`;
+}
+
 function buildQuotationHTML(q, clients, co) {
   const cl = clients.find(c => c.id === q.clientId) || {};
-  return `<div class="q12"><h1>見　積　書</h1>
-  <div class="hd"><div><div>${cl.address || ""}</div><div class="cn">${cl.name || ""} ${cl.honorific || "御中"}</div>
-  <div class="meta">見積番号：${q.docNo}<br>見積日：${q.date}<br>有効期限：${q.validUntil || ""}</div></div>${coBlock(co, q, false)}</div>
-  ${itemsHTML(q.items || [])}${footerHTML(q.items || [], null)}
-  ${q.notes ? `<div style="margin-top:10px;font-size:13.2px;color:#555">備考：${q.notes}</div>` : ""}</div>`;
+  return buildDocBody("見　積　書", cl, co,
+    `見積番号：${q.docNo}　　見積日：${q.date}　　有効期限：${q.validUntil || ""}`,
+    "下記の通りお見積り申し上げます", q.items || [], false, false, q.notes, false, null, null);
 }
 
 function buildDeliveryHTML(d, clients, co) {
   const cl = clients.find(c => c.id === d.clientId) || {};
-  return `<h1>納　品　書</h1>
-  <div class="hd"><div><div>${cl.address || ""}</div><div class="cn">${cl.name || ""} ${cl.honorific || "御中"}</div>
-  <div class="meta">伝票番号：${d.docNo}<br>売上日：${d.date}</div></div>${coBlock(co, d, false)}</div>
-  ${itemsHTML(d.items || [])}${footerHTML(d.items || [], null)}
-  ${d.notes ? `<div style="margin-top:10px;font-size:11px;color:#555">備考：${d.notes}</div>` : ""}`;
+  return buildDocBody("納　品　書", cl, co,
+    `伝票番号：${d.docNo}　　納品日：${d.date}`,
+    "下記の通り納品いたします", d.items || [], false, false, d.notes, false, null, null);
 }
 
 function buildInvoiceHTML(inv, clients, co) {
   const cl = clients.find(c => c.id === inv.clientId) || {};
-  return `<h1>請　求　書</h1>
-  <div class="hd"><div><div>${cl.address || ""}</div><div class="cn">${cl.name || ""} ${cl.honorific || "御中"}</div>
-  <div class="meta">請求番号：${inv.docNo}<br>売上日：${inv.date}<br>支払期限：${inv.dueDate || ""}</div></div>${coBlock(co, inv, true)}</div>
-  ${itemsHTML(inv.items || [])}${footerHTML(inv.items || [], co)}
-  ${inv.deliveryRefs?.length ? `<div style="margin-top:10px;font-size:11px;color:#555">対象納品書：${inv.deliveryRefs.join("、")}</div>` : ""}`;
+  return buildDocBody("請　求　書", cl, co,
+    `請求番号：${inv.docNo}　　請求日：${inv.date}　　支払期限：${inv.dueDate || ""}`,
+    "下記の通り御請求申し上げます", inv.items || [], true, true, null, false, null, null);
 }
 
 function buildMeisaiHTML(inv, clients, co, bal) {
@@ -335,172 +382,54 @@ function buildMeisaiHTML(inv, clients, co, bal) {
   const allItems = inv.items || [];
   const { sub, tax, total: invTotal } = totalFromItems(allItems);
   const groups = calcTaxByRate(allItems);
-  const rates = Object.keys(groups).sort((a,b)=>Number(b)-Number(a));
+  const rates = Object.keys(groups).sort((a, b) => Number(b) - Number(a));
   const prev = bal?.prevBalance || 0;
   const paid = bal?.paidAmount || 0;
   const carry = prev - paid;
   const total = carry + invTotal;
   const refs = inv.deliveryRefs || [];
   const refItems = typeof inv.deliveryRefItems === "string" ? JSON.parse(inv.deliveryRefItems) : (inv.deliveryRefItems || []);
-  let rows = "";
-  if (paid > 0) rows += `<tr><td>${inv.date}</td><td>振込</td><td></td><td></td><td></td><td class="nr" style="color:green">¥${fmt(paid)}</td></tr>`;
-  if (refs.length > 0) {
-    refs.forEach((ref, ri) => {
-      const items = refItems[ri] || [];
-      items.forEach(i => {
-        const a = Number(i.qty || 0) * Number(i.price || 0);
-        const r = i.taxRate !== undefined && i.taxRate !== null && i.taxRate !== "" ? Number(i.taxRate) : 10;
-        rows += `<tr><td style="font-size:10px">${ref}</td><td>${i.name || ""}<span style="font-size:9px;float:right;color:#555">課${r}%</span></td><td class="nr">${i.qty}</td><td>${i.unit || ""}</td><td class="nr">¥${fmt(i.price)}</td><td class="nr">¥${fmt(a)}</td></tr>`;
-      });
-    });
-  } else {
-    allItems.forEach(i => {
-      const a = Number(i.qty || 0) * Number(i.price || 0);
-      const r = i.taxRate !== undefined && i.taxRate !== null && i.taxRate !== "" ? Number(i.taxRate) : 10;
-      rows += `<tr><td></td><td>${i.name || ""}<span style="font-size:9px;float:right;color:#555">課${r}%</span></td><td class="nr">${i.qty}</td><td>${i.unit || ""}</td><td class="nr">¥${fmt(i.price)}</td><td class="nr">¥${fmt(a)}</td></tr>`;
-    });
-  }
+
   return `<h1>請　求　明　細　書</h1>
-  <div class="hd"><div><div>${cl.address || ""}</div><div class="cn">${cl.name || ""} ${cl.honorific || "御中"}</div>
-  <div class="meta">締切分：${inv.date}　No.${inv.docNo}</div></div>${coBlock(co, inv, true)}</div>
-  <table class="bt" style="margin-bottom:16px"><thead><tr>
-    <th>前回御請求額</th><th>御入金額</th><th>繰越金額</th><th>今回御買上額</th><th>消費税</th><th>今回御請求額</th>
-  </tr></thead><tbody><tr>
-    <td>¥${fmt(prev)}</td><td>¥${fmt(paid)}</td><td>¥${fmt(carry)}</td>
-    <td>¥${fmt(sub)}</td><td>¥${fmt(tax)}</td>
-    <td style="font-weight:bold;font-size:13px;color:#1C2B4A">¥${fmt(total)}</td>
-  </tr></tbody></table>
-  <p style="font-size:11px;margin:0 0 8px">下記の通り御請求申し上げます</p>
-  <table class="it"><thead><tr>
-    <th style="width:15%">日付/伝票番号</th><th style="width:35%">商品名</th>
-    <th style="width:8%">数量</th><th style="width:8%">単位</th><th style="width:16%">単価</th><th style="width:18%">金額</th>
-  </tr></thead><tbody>
-    ${rows}
-    <tr style="background:#f9f9f9"><td colspan="5">消費税</td><td class="nr">¥${fmt(tax)}</td></tr>
-    ${rates.map(r=>`<tr class="tr"><td colspan="5">【課税${r}% 税抜額】</td><td class="nr">¥${fmt(groups[r].sub)}</td></tr>
-    <tr class="tr"><td colspan="5">【課税${r}% 消費税額】</td><td class="nr">¥${fmt(groups[r].tax)}</td></tr>`).join("")}
-  </tbody></table>
-  <div class="tot"><table style="margin-left:auto;border-collapse:collapse">
-    <tr><td style="padding:4px 12px;border:1px solid #ccc">税抜額</td><td style="padding:4px 16px;border:1px solid #ccc;text-align:right;font-weight:bold">¥${fmt(sub)}</td>
-    <td style="padding:4px 12px;border:1px solid #ccc">消費税額</td><td style="padding:4px 16px;border:1px solid #ccc;text-align:right;font-weight:bold">¥${fmt(tax)}</td>
-    <td style="padding:4px 12px;background:#1C2B4A;color:#fff;font-weight:bold">今回御請求額</td>
-    <td style="padding:4px 20px;border:2px solid #1C2B4A;text-align:right;font-size:16px;font-weight:bold;color:#1C2B4A">¥${fmt(total)}</td></tr>
-  </table></div>
-  ${co?.bankName ? `<div class="bb">振込専用口座　${co.bankName}　${co.bankBranch}　${co.bankType || "普通"}　${co.bankNo}　${co.bankHolder || ""}<br>お支払期日：翌月末日　※振込手数料はご負担下さいますようお願い致します。</div>` : ""}`;
-}
-
-function printQuotation(q,clients,co){
-  const cl=clients.find(c=>c.id===q.clientId)||{};
-  openPrint(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${baseCSS}</style></head><body class="q12">
-  <h1>見　積　書</h1>
-  <div class="hd"><div><div>${cl.address||""}</div><div class="cn">${cl.name||""} ${cl.honorific||"御中"}</div>
-  <div class="meta">見積番号：${q.docNo}<br>見積日：${q.date}<br>有効期限：${q.validUntil||""}</div></div>${coBlock(co,q,false)}</div>
-  ${itemsHTML(q.items||[])}${footerHTML(q.items||[],null)}
-  ${q.notes?`<div style="margin-top:10px;font-size:13.2px;color:#555">備考：${q.notes}</div>`:""}
-  </body></html>`);
-}
-
-function printDelivery(d,clients,co){
-  const cl=clients.find(c=>c.id===d.clientId)||{};
-  openPrint(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${baseCSS}</style></head><body>
-  <h1>納　品　書</h1>
-  <div class="hd"><div><div>${cl.address||""}</div><div class="cn">${cl.name||""} ${cl.honorific||"御中"}</div>
-  <div class="meta">伝票番号：${d.docNo}<br>売上日：${d.date}</div></div>${coBlock(co,d,false)}</div>
-  ${itemsHTML(d.items||[])}${footerHTML(d.items||[],null)}
-  ${d.notes?`<div style="margin-top:10px;font-size:11px;color:#555">備考：${d.notes}</div>`:""}
-  </body></html>`);
-}
-
-function printInvoice(inv,clients,co){
-  const cl=clients.find(c=>c.id===inv.clientId)||{};
-  openPrint(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${baseCSS}</style></head><body>
-  <h1>請　求　書</h1>
-  <div class="hd"><div><div>${cl.address||""}</div><div class="cn">${cl.name||""} ${cl.honorific||"御中"}</div>
-  <div class="meta">請求番号：${inv.docNo}<br>売上日：${inv.date}<br>支払期限：${inv.dueDate||""}</div></div>${coBlock(co,inv,true)}</div>
-  ${itemsHTML(inv.items||[])}${footerHTML(inv.items||[],co)}
-  ${inv.deliveryRefs?.length?`<div style="margin-top:10px;font-size:11px;color:#555">対象納品書：${inv.deliveryRefs.join("、")}</div>`:""}
-  </body></html>`);
-}
-
-function printCombined(d,inv,clients,co){
-  const cl=clients.find(c=>c.id===d.clientId)||{};
-  openPrint(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${baseCSS}</style></head><body>
-  <div class="pb">
-  <h1>納　品　書</h1>
-  <div class="hd"><div><div>${cl.address||""}</div><div class="cn">${cl.name||""} ${cl.honorific||"御中"}</div>
-  <div class="meta">伝票番号：${d.docNo}<br>売上日：${d.date}</div></div>${coBlock(co,d,false)}</div>
-  ${itemsHTML(d.items||[])}${footerHTML(d.items||[],null)}</div>
-  <h1>請　求　書</h1>
-  <div class="hd"><div><div>${cl.address||""}</div><div class="cn">${cl.name||""} ${cl.honorific||"御中"}</div>
-  <div class="meta">請求番号：${inv.docNo}<br>売上日：${inv.date}<br>支払期限：${inv.dueDate||""}</div></div>${coBlock(co,inv,true)}</div>
-  ${itemsHTML(inv.items||[])}${footerHTML(inv.items||[],co)}
-  </body></html>`);
-}
-
-function printMeisai(inv,clients,co,bal){
-  const cl=clients.find(c=>c.id===inv.clientId)||{};
-  const allItems=inv.items||[];
-  const {sub,tax,total:invTotal}=totalFromItems(allItems);
-  const groups=calcTaxByRate(allItems);
-  const rates=Object.keys(groups).sort((a,b)=>Number(b)-Number(a));
-  const prev=bal?.prevBalance||0;
-  const paid=bal?.paidAmount||0;
-  const carry=prev-paid;
-  const total=carry+invTotal;
-  const refs=inv.deliveryRefs||[];
-  const refItems=typeof inv.deliveryRefItems==="string"?JSON.parse(inv.deliveryRefItems):(inv.deliveryRefItems||[]);
-
-  let rows="";
-  if(paid>0) rows+=`<tr><td>${inv.date}</td><td>振込</td><td></td><td></td><td></td><td class="nr" style="color:green">¥${fmt(paid)}</td></tr>`;
-  if(refs.length>0){
-    refs.forEach((ref,ri)=>{
-      const items=refItems[ri]||[];
-      items.forEach(i=>{
-        const a=Number(i.qty||0)*Number(i.price||0);
-        const r=i.taxRate!==undefined&&i.taxRate!==null&&i.taxRate!==""?Number(i.taxRate):10;
-        rows+=`<tr><td style="font-size:10px">${ref}</td><td>${i.name||""}<span style="font-size:9px;float:right;color:#555">課${r}%</span></td><td class="nr">${i.qty}</td><td>${i.unit||""}</td><td class="nr">¥${fmt(i.price)}</td><td class="nr">¥${fmt(a)}</td></tr>`;
-      });
-    });
-  } else {
-    allItems.forEach(i=>{
-      const a=Number(i.qty||0)*Number(i.price||0);
-      const r=i.taxRate!==undefined&&i.taxRate!==null&&i.taxRate!==""?Number(i.taxRate):10;
-      rows+=`<tr><td></td><td>${i.name||""}<span style="font-size:9px;float:right;color:#555">課${r}%</span></td><td class="nr">${i.qty}</td><td>${i.unit||""}</td><td class="nr">¥${fmt(i.price)}</td><td class="nr">¥${fmt(a)}</td></tr>`;
-    });
-  }
-
-  openPrint(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${baseCSS}</style></head><body>
-  <h1>請　求　明　細　書</h1>
+  <div class="doc-info"><span>${inv.date} 締切分　　No. ${inv.docNo}</span></div>
   <div class="hd">
-    <div><div>${cl.address||""}</div><div class="cn">${cl.name||""} ${cl.honorific||"御中"}</div>
-    <div class="meta">締切分：${inv.date}　No.${inv.docNo}</div></div>
-    ${coBlock(co,inv,true)}
+    <div class="cl-info">
+      ${cl.zip ? `<div class="cl-zip">${cl.zip}</div>` : ""}
+      <div class="cl-addr">${cl.address || ""}</div>
+      <div class="cn">${cl.name || ""} ${cl.honorific || "御中"}</div>
+    </div>
+    ${coBlock(co, null, true)}
   </div>
-  <table class="bt" style="margin-bottom:16px"><thead><tr>
+  <p class="greeting">下記の通り御請求申し上げます</p>
+  <table class="bt"><thead><tr>
     <th>前回御請求額</th><th>御入金額</th><th>繰越金額</th><th>今回御買上額</th><th>消費税</th><th>今回御請求額</th>
   </tr></thead><tbody><tr>
-    <td>¥${fmt(prev)}</td><td>¥${fmt(paid)}</td><td>¥${fmt(carry)}</td>
-    <td>¥${fmt(sub)}</td><td>¥${fmt(tax)}</td>
-    <td style="font-weight:bold;font-size:13px;color:#1C2B4A">¥${fmt(total)}</td>
+    <td>${fmt(prev)}</td><td>${fmt(paid)}</td><td>${fmt(carry)}</td>
+    <td>${fmt(sub)}</td><td>${fmt(tax)}</td>
+    <td class="total-cell">${fmt(total)}</td>
   </tr></tbody></table>
-  <p style="font-size:11px;margin:0 0 8px">下記の通り御請求申し上げます</p>
-  <table class="it"><thead><tr>
-    <th style="width:15%">日付/伝票番号</th><th style="width:35%">商品名</th>
-    <th style="width:8%">数量</th><th style="width:8%">単位</th><th style="width:16%">単価</th><th style="width:18%">金額</th>
-  </tr></thead><tbody>
-    ${rows}
-    <tr style="background:#f9f9f9"><td colspan="5">消費税</td><td class="nr">¥${fmt(tax)}</td></tr>
-    ${rates.map(r=>`<tr class="tr"><td colspan="5">【課税${r}% 税抜額】</td><td class="nr">¥${fmt(groups[r].sub)}</td></tr>
-    <tr class="tr"><td colspan="5">【課税${r}% 消費税額】</td><td class="nr">¥${fmt(groups[r].tax)}</td></tr>`).join("")}
-  </tbody></table>
-  <div class="tot"><table style="margin-left:auto;border-collapse:collapse">
-    <tr><td style="padding:4px 12px;border:1px solid #ccc">税抜額</td><td style="padding:4px 16px;border:1px solid #ccc;text-align:right;font-weight:bold">¥${fmt(sub)}</td>
-    <td style="padding:4px 12px;border:1px solid #ccc">消費税額</td><td style="padding:4px 16px;border:1px solid #ccc;text-align:right;font-weight:bold">¥${fmt(tax)}</td>
-    <td style="padding:4px 12px;background:#1C2B4A;color:#fff;font-weight:bold">今回御請求額</td>
-    <td style="padding:4px 20px;border:2px solid #1C2B4A;text-align:right;font-size:16px;font-weight:bold;color:#1C2B4A">¥${fmt(total)}</td></tr>
-  </table></div>
-  ${co?.bankName?`<div class="bb">振込専用口座　${co.bankName}　${co.bankBranch}　${co.bankType||"普通"}　${co.bankNo}　${co.bankHolder||""}<br>お支払期日：翌月末日　※振込手数料はご負担下さいますようお願い致します。</div>`:""}
-  </body></html>`);
+  ${detailTableHTML(allItems, true, refs, refItems)}
+  ${bankFooterHTML(co)}`;
+}
+
+function printQuotation(q, clients, co) {
+  openPrint(docHTML("見積書", buildQuotationHTML(q, clients, co)));
+}
+
+function printDelivery(d, clients, co) {
+  openPrint(docHTML("納品書", buildDeliveryHTML(d, clients, co)));
+}
+
+function printInvoice(inv, clients, co) {
+  openPrint(docHTML("請求書", buildInvoiceHTML(inv, clients, co)));
+}
+
+function printCombined(d, inv, clients, co) {
+  openPrint(docHTML("納品書＋請求書", `<div class="pb">${buildDeliveryHTML(d, clients, co)}</div>${buildInvoiceHTML(inv, clients, co)}`));
+}
+
+function printMeisai(inv, clients, co, bal) {
+  openPrint(docHTML("請求明細書", buildMeisaiHTML(inv, clients, co, bal)));
 }
 
 // ── Print Mode Modal ──────────────────────────────────────────────────────────
