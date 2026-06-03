@@ -743,6 +743,42 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
     const data = { ...form, docNo: (isEdit && editing.docNo) || genDocNo("NO", deliveries), status: (isEdit && editing.status) || (autoInv ? "invoiced" : "unissued"), subtotal: sub, tax, total: grandTotal, updatedAt: serverTimestamp() };
     if (isEdit) {
       await updateDoc(doc(db, "deliveries", editing.id), data);
+      // 紐づく請求書があれば連動更新
+      const linkedInvs = invoices.filter(i => i.deliveryRef === editing.docNo || (i.deliveryRefs || []).includes(editing.docNo));
+      for (const inv of linkedInvs) {
+        if (inv.deliveryRefs?.length > 1) {
+          // 締日請求（複数納品書まとめ）→ 全納品書のitemsを再集計
+          const allDels = deliveries.map(d => d.id === editing.id ? { ...d, items: form.items, subtotal: sub, tax, total: grandTotal } : d);
+          const relDels = inv.deliveryRefs.map(ref => allDels.find(d => d.docNo === ref)).filter(Boolean);
+          const allItems = relDels.flatMap(d => d.items || []);
+          const recalc = totalFromItems(allItems);
+          const oldTotal = inv.total || 0;
+          await updateDoc(doc(db, "invoices", inv.id), { items: allItems, subtotal: recalc.sub, tax: recalc.tax, total: recalc.total, deliveryRefItems: JSON.stringify(relDels.map(d => d.items || [])), updatedAt: serverTimestamp() });
+          // 残高差分更新
+          const diff = recalc.total - oldTotal;
+          if (diff !== 0) {
+            const bal = balances?.[form.clientId] || {};
+            await setDoc(doc(db, "clientBalances", form.clientId), {
+              clientId: form.clientId, prevBalance: bal.currentBalance || 0,
+              currentBalance: (bal.currentBalance || 0) + diff,
+              paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
+            });
+          }
+        } else {
+          // 即時請求（1対1）→ そのまま反映
+          const oldTotal = inv.total || 0;
+          await updateDoc(doc(db, "invoices", inv.id), { items: form.items, subtotal: sub, tax, total: grandTotal, updatedAt: serverTimestamp() });
+          const diff = grandTotal - oldTotal;
+          if (diff !== 0) {
+            const bal = balances?.[form.clientId] || {};
+            await setDoc(doc(db, "clientBalances", form.clientId), {
+              clientId: form.clientId, prevBalance: bal.currentBalance || 0,
+              currentBalance: (bal.currentBalance || 0) + diff,
+              paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
+            });
+          }
+        }
+      }
     } else {
       data.createdAt = serverTimestamp();
       const delRef = await addDoc(collection(db, "deliveries"), data);
