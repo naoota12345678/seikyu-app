@@ -181,17 +181,35 @@ export default async function handler(req, res) {
       const snap = await db.collection("settings").limit(1).get();
       if (snap.empty) return res.status(200).json({ debug: "settings empty" });
       const s = snap.docs[0].data();
-      const secret = (s.rakutenServiceSecret || "").trim();
-      const license = (s.rakutenLicenseKey || "").trim();
+      const rawSecret = s.rakutenServiceSecret || "";
+      const rawLicense = s.rakutenLicenseKey || "";
+      const secret = rawSecret.trim();
+      const license = rawLicense.trim();
+      const authKey = Buffer.from(`${secret}:${license}`).toString("base64");
+      // 実際にRakuten APIを叩いてレスポンスを確認
+      let testResult = null;
+      try {
+        const testBody = { dateType: 1, startDatetime: "2026-06-01T00:00:00+0900", endDatetime: "2026-06-01T23:59:59+0900", orderProgressList: [100,200,300,400,500,600,700], PaginationRequestModel: { requestRecordsAmount: 1, requestPage: 1 } };
+        const testRes = await fetch("https://api.rms.rakuten.co.jp/es/2.0/order/searchOrder/", {
+          method: "POST",
+          headers: { "Authorization": `ESA ${authKey}`, "Content-Type": "application/json; charset=utf-8" },
+          body: JSON.stringify(testBody),
+        });
+        const testText = await testRes.text();
+        testResult = { status: testRes.status, headers: Object.fromEntries(testRes.headers.entries()), body: testText.slice(0, 500) };
+      } catch (e) { testResult = { error: e.message }; }
       return res.status(200).json({
         debug: true,
+        rawSecretLen: rawSecret.length,
         secretLen: secret.length,
-        secretHead: secret.slice(0, 4) + "...",
-        secretTail: "..." + secret.slice(-4),
+        rawLicenseLen: rawLicense.length,
         licenseLen: license.length,
-        licenseHead: license.slice(0, 4) + "...",
-        licenseTail: "..." + license.slice(-4),
-        authHeader: "ESA " + Buffer.from(`${secret}:${license}`).toString("base64").slice(0, 10) + "...",
+        hasWhitespace: rawSecret !== secret || rawLicense !== license,
+        hasNewline: rawSecret.includes("\n") || rawLicense.includes("\n"),
+        secretChars: [...secret].map(c => c.charCodeAt(0)).slice(0, 6),
+        licenseChars: [...license].map(c => c.charCodeAt(0)).slice(0, 6),
+        authHeaderPreview: `ESA ${authKey.slice(0, 16)}...`,
+        testResult,
       });
     }
 
