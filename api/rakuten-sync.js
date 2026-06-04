@@ -185,7 +185,6 @@ export default async function handler(req, res) {
       const rawLicense = s.rakutenLicenseKey || "";
       const secret = rawSecret.trim();
       const license = rawLicense.trim();
-      const authKey = Buffer.from(`${secret}:${license}`).toString("base64");
       // 認証テスト: v3エンドポイント
       const authKey = Buffer.from(`${secret}:${license}`).toString("base64");
       try {
