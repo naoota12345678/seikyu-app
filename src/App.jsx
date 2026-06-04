@@ -234,13 +234,13 @@ function buildDetailRows(items, refs, refItems) {
       const ritems = (refItems && refItems[ri]) || [];
       ritems.forEach((i, ii) => {
         const a = Number(i.qty || 0) * Number(i.price || 0);
-        rows.push(`<tr><td style="font-size:10px">${ii === 0 ? ref : ""}</td><td>${i.name || ""}</td><td class="nr">${i.qty || ""}</td><td>${i.unit || ""}</td><td class="nr">${fmt(i.price)}</td><td class="tax-label">${taxLabel(i.taxRate)}</td><td class="nr">${fmt(a)}</td></tr>`);
+        rows.push(`<tr><td style="font-size:10px">${ii === 0 ? ref : ""}</td><td>${i.name || ""}</td><td class="nr">${i.qty || ""}</td><td>${i.unit || ""}</td><td class="nr">${fmt(i.price)}</td><td class="nr">${fmt(a)}</td><td class="tax-label">${taxLabel(i.taxRate)}</td></tr>`);
       });
     });
   } else {
     items.forEach(i => {
       const a = Number(i.qty || 0) * Number(i.price || 0);
-      rows.push(`<tr><td></td><td>${i.name || ""}</td><td class="nr">${i.qty || ""}</td><td>${i.unit || ""}</td><td class="nr">${fmt(i.price)}</td><td class="tax-label">${taxLabel(i.taxRate)}</td><td class="nr">${fmt(a)}</td></tr>`);
+      rows.push(`<tr><td></td><td>${i.name || ""}</td><td class="nr">${i.qty || ""}</td><td>${i.unit || ""}</td><td class="nr">${fmt(i.price)}</td><td class="nr">${fmt(a)}</td><td class="tax-label">${taxLabel(i.taxRate)}</td></tr>`);
     });
   }
   return rows;
@@ -249,7 +249,7 @@ function buildDetailRows(items, refs, refItems) {
 function buildSimpleDetailRows(items) {
   return items.map(i => {
     const a = Number(i.qty || 0) * Number(i.price || 0);
-    return `<tr><td>${i.name || ""}</td><td class="nr">${i.qty || ""}</td><td>${i.unit || ""}</td><td class="nr">${fmt(i.price)}</td><td class="tax-label">${taxLabel(i.taxRate)}</td><td class="nr">${fmt(a)}</td></tr>`;
+    return `<tr><td>${i.name || ""}</td><td class="nr">${i.qty || ""}</td><td>${i.unit || ""}</td><td class="nr">${fmt(i.price)}</td><td class="nr">${fmt(a)}</td><td class="tax-label">${taxLabel(i.taxRate)}</td></tr>`;
   });
 }
 
@@ -257,20 +257,21 @@ function detailTableHTML(items, hasDateCol, refs, refItems) {
   const groups = calcTaxByRate(items);
   const rates = Object.keys(groups).sort((a, b) => Number(b) - Number(a));
   const dataRows = hasDateCol ? buildDetailRows(items, refs, refItems) : buildSimpleDetailRows(items);
+  const { sub: totalSub, tax: totalTax } = totalFromItems(items);
   const taxRows = [];
-  taxRows.push(`<tr><td colspan="${hasDateCol ? 6 : 5}">消　費　税</td><td class="nr">${fmt(totalFromItems(items).tax)}</td></tr>`);
+  taxRows.push(`<tr><td colspan="${hasDateCol ? 6 : 5}">合計税抜き額</td><td class="nr">${fmt(totalSub)}</td></tr>`);
   rates.forEach(r => {
     const isReduced = Number(r) === 8;
-    taxRows.push(`<tr class="tr"><td colspan="${hasDateCol ? 6 : 5}">【合計 課税${isReduced ? "(軽) " : ""}${r}.0% 税抜額】</td><td class="nr">${fmt(groups[r].sub)}</td></tr>`);
-    taxRows.push(`<tr class="tr"><td colspan="${hasDateCol ? 6 : 5}">【合計 課税${isReduced ? "(軽) " : ""}${r}.0% 消費税額】</td><td class="nr">${fmt(groups[r].tax)}</td></tr>`);
+    taxRows.push(`<tr><td colspan="${hasDateCol ? 6 : 5}">消費税（${isReduced ? "軽減" : ""}${r}%）</td><td class="nr">${fmt(groups[r].tax)}</td></tr>`);
   });
+  taxRows.push(`<tr><td colspan="${hasDateCol ? 6 : 5}"><strong>総　合　計</strong></td><td class="nr"><strong>${fmt(totalSub + totalTax)}</strong></td></tr>`);
   const totalUsed = dataRows.length + taxRows.length;
   const emptyCount = Math.max(0, DETAIL_ROWS - totalUsed);
   const emptyCols = hasDateCol ? 7 : 6;
   const emptyRows = Array(emptyCount).fill(`<tr>${Array(emptyCols).fill("<td></td>").join("")}</tr>`);
   const thDate = hasDateCol ? `<th style="width:14%">日付/伝票番号</th>` : "";
   return `<table class="it"><thead><tr>
-    ${thDate}<th style="width:${hasDateCol ? "28" : "34"}%">商品コード/商品名</th><th style="width:7%">数量</th><th style="width:6%">単位</th><th style="width:12%">単　価</th><th style="width:9%"></th><th style="width:${hasDateCol ? "14" : "16"}%">金　額</th>
+    ${thDate}<th style="width:${hasDateCol ? "28" : "34"}%">商品コード/商品名</th><th style="width:7%">数量</th><th style="width:6%">単位</th><th style="width:12%">単　価</th><th style="width:${hasDateCol ? "14" : "16"}%">金　額</th><th style="width:9%">備　考</th>
   </tr></thead><tbody>
     ${dataRows.join("")}${emptyRows.join("")}${taxRows.join("")}
   </tbody></table>`;
