@@ -176,6 +176,25 @@ export default async function handler(req, res) {
   }
 
   try {
+    // デバッグ: 認証情報の確認
+    if (req.method === "POST" && req.body?.mode === "debug") {
+      const snap = await db.collection("settings").limit(1).get();
+      if (snap.empty) return res.status(200).json({ debug: "settings empty" });
+      const s = snap.docs[0].data();
+      const secret = (s.rakutenServiceSecret || "").trim();
+      const license = (s.rakutenLicenseKey || "").trim();
+      return res.status(200).json({
+        debug: true,
+        secretLen: secret.length,
+        secretHead: secret.slice(0, 4) + "...",
+        secretTail: "..." + secret.slice(-4),
+        licenseLen: license.length,
+        licenseHead: license.slice(0, 4) + "...",
+        licenseTail: "..." + license.slice(-4),
+        authHeader: "ESA " + Buffer.from(`${secret}:${license}`).toString("base64").slice(0, 10) + "...",
+      });
+    }
+
     const authKey = await getRakutenAuth();
     if (!authKey) {
       return res.status(200).json({ ok: false, message: "楽天API認証情報が未設定です" });
