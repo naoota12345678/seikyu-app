@@ -186,31 +186,46 @@ export default async function handler(req, res) {
       const secret = rawSecret.trim();
       const license = rawLicense.trim();
       const authKey = Buffer.from(`${secret}:${license}`).toString("base64");
-      // 実際にRakuten APIを叩いてレスポンスを確認
-      let testResult = null;
+      // 複数エンドポイントで認証テスト
+      const authKey = Buffer.from(`${secret}:${license}`).toString("base64");
+      const tests = {};
+      // Test 1: searchOrder (現在のコード)
       try {
-        const testBody = { dateType: 1, startDatetime: "2026-06-01T00:00:00+0900", endDatetime: "2026-06-01T23:59:59+0900", orderProgressList: [100,200,300,400,500,600,700], PaginationRequestModel: { requestRecordsAmount: 1, requestPage: 1 } };
-        const testRes = await fetch("https://api.rms.rakuten.co.jp/es/2.0/order/searchOrder/", {
+        const r = await fetch("https://api.rms.rakuten.co.jp/es/2.0/order/searchOrder/", {
           method: "POST",
           headers: { "Authorization": `ESA ${authKey}`, "Content-Type": "application/json; charset=utf-8" },
-          body: JSON.stringify(testBody),
+          body: JSON.stringify({ dateType: 1, startDatetime: "2026-06-01T00:00:00+0900", endDatetime: "2026-06-01T23:59:59+0900", orderProgressList: [300,500], PaginationRequestModel: { requestRecordsAmount: 1, requestPage: 1 } }),
         });
-        const testText = await testRes.text();
-        testResult = { status: testRes.status, headers: Object.fromEntries(testRes.headers.entries()), body: testText.slice(0, 500) };
-      } catch (e) { testResult = { error: e.message }; }
-      return res.status(200).json({
-        debug: true,
-        rawSecretLen: rawSecret.length,
-        secretLen: secret.length,
-        rawLicenseLen: rawLicense.length,
-        licenseLen: license.length,
-        hasWhitespace: rawSecret !== secret || rawLicense !== license,
-        hasNewline: rawSecret.includes("\n") || rawLicense.includes("\n"),
-        secretChars: [...secret].map(c => c.charCodeAt(0)).slice(0, 6),
-        licenseChars: [...license].map(c => c.charCodeAt(0)).slice(0, 6),
-        authHeaderPreview: `ESA ${authKey.slice(0, 16)}...`,
-        testResult,
-      });
+        tests.searchOrder_v2 = { status: r.status, body: (await r.text()).slice(0, 300) };
+      } catch (e) { tests.searchOrder_v2 = { error: e.message }; }
+      // Test 2: searchOrder without trailing slash
+      try {
+        const r = await fetch("https://api.rms.rakuten.co.jp/es/2.0/order/searchOrder", {
+          method: "POST",
+          headers: { "Authorization": `ESA ${authKey}`, "Content-Type": "application/json; charset=utf-8" },
+          body: JSON.stringify({ dateType: 1, startDatetime: "2026-06-01T00:00:00+0900", endDatetime: "2026-06-01T23:59:59+0900", orderProgressList: [300,500], PaginationRequestModel: { requestRecordsAmount: 1, requestPage: 1 } }),
+        });
+        tests.searchOrder_v2_noslash = { status: r.status, body: (await r.text()).slice(0, 300) };
+      } catch (e) { tests.searchOrder_v2_noslash = { error: e.message }; }
+      // Test 3: v3 endpoint
+      try {
+        const r = await fetch("https://api.rms.rakuten.co.jp/es/3.0/order/searchOrder/", {
+          method: "POST",
+          headers: { "Authorization": `ESA ${authKey}`, "Content-Type": "application/json; charset=utf-8" },
+          body: JSON.stringify({ dateType: 1, startDatetime: "2026-06-01T00:00:00+0900", endDatetime: "2026-06-01T23:59:59+0900", orderProgressList: [300,500], PaginationRequestModel: { requestRecordsAmount: 1, requestPage: 1 } }),
+        });
+        tests.searchOrder_v3 = { status: r.status, body: (await r.text()).slice(0, 300) };
+      } catch (e) { tests.searchOrder_v3 = { error: e.message }; }
+      // Test 4: purchaseitem API (different endpoint)
+      try {
+        const r = await fetch("https://api.rms.rakuten.co.jp/es/2.0/purchaseitem/searchOrderItem/", {
+          method: "POST",
+          headers: { "Authorization": `ESA ${authKey}`, "Content-Type": "application/json; charset=utf-8" },
+          body: JSON.stringify({ dateType: 1, startDate: "2026-06-01", endDate: "2026-06-01" }),
+        });
+        tests.purchaseItem_v2 = { status: r.status, body: (await r.text()).slice(0, 300) };
+      } catch (e) { tests.purchaseItem_v2 = { error: e.message }; }
+      return res.status(200).json({ debug: true, secretLen: secret.length, licenseLen: license.length, tests });
     }
 
     const authKey = await getRakutenAuth();
