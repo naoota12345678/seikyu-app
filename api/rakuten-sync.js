@@ -185,17 +185,26 @@ export default async function handler(req, res) {
       const rawLicense = s.rakutenLicenseKey || "";
       const secret = rawSecret.trim();
       const license = rawLicense.trim();
-      // 認証テスト: v3エンドポイント
+      // 全文字コード出力 + v2テスト
       const authKey = Buffer.from(`${secret}:${license}`).toString("base64");
+      const combined = `${secret}:${license}`;
       try {
-        const r = await fetch("https://api.rms.rakuten.co.jp/es/3.0/order/searchOrder/", {
+        const r = await fetch("https://api.rms.rakuten.co.jp/es/2.0/order/searchOrder/", {
           method: "POST",
           headers: { "Authorization": `ESA ${authKey}`, "Content-Type": "application/json; charset=utf-8" },
           body: JSON.stringify({ dateType: 1, startDatetime: "2026-06-01T00:00:00+0900", endDatetime: "2026-06-01T23:59:59+0900", orderProgressList: [300,500], PaginationRequestModel: { requestRecordsAmount: 1, requestPage: 1 } }),
         });
         const text = await r.text();
-        return res.status(200).json({ debug: true, v3: { status: r.status, body: text.slice(0, 500) } });
-      } catch (e) { return res.status(200).json({ debug: true, v3error: e.message }); }
+        return res.status(200).json({
+          debug: true,
+          secretAllChars: [...secret].map(c => c.charCodeAt(0)),
+          licenseAllChars: [...license].map(c => c.charCodeAt(0)),
+          combinedLen: combined.length,
+          base64Len: authKey.length,
+          fullBase64: authKey,
+          v2: { status: r.status, body: text.slice(0, 300) },
+        });
+      } catch (e) { return res.status(200).json({ debug: true, error: e.message }); }
     }
 
     const authKey = await getRakutenAuth();
