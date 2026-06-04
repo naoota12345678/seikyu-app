@@ -186,20 +186,17 @@ export default async function handler(req, res) {
       const secret = rawSecret.trim();
       const license = rawLicense.trim();
       const authKey = Buffer.from(`${secret}:${license}`).toString("base64");
-      // 認証テスト: v2 vs v3
+      // 認証テスト: v3エンドポイント
       const authKey = Buffer.from(`${secret}:${license}`).toString("base64");
-      const tests = {};
-      const body = JSON.stringify({ dateType: 1, startDatetime: "2026-06-01T00:00:00+0900", endDatetime: "2026-06-01T23:59:59+0900", orderProgressList: [300,500], PaginationRequestModel: { requestRecordsAmount: 1, requestPage: 1 } });
-      const hdrs = { "Authorization": `ESA ${authKey}`, "Content-Type": "application/json; charset=utf-8" };
       try {
-        const [r1, r2] = await Promise.all([
-          fetch("https://api.rms.rakuten.co.jp/es/2.0/order/searchOrder/", { method: "POST", headers: hdrs, body }),
-          fetch("https://api.rms.rakuten.co.jp/es/3.0/order/searchOrder/", { method: "POST", headers: hdrs, body }),
-        ]);
-        tests.v2 = { status: r1.status, body: (await r1.text()).slice(0, 300) };
-        tests.v3 = { status: r2.status, body: (await r2.text()).slice(0, 300) };
-      } catch (e) { tests.error = e.message; }
-      return res.status(200).json({ debug: true, secretLen: secret.length, licenseLen: license.length, tests });
+        const r = await fetch("https://api.rms.rakuten.co.jp/es/3.0/order/searchOrder/", {
+          method: "POST",
+          headers: { "Authorization": `ESA ${authKey}`, "Content-Type": "application/json; charset=utf-8" },
+          body: JSON.stringify({ dateType: 1, startDatetime: "2026-06-01T00:00:00+0900", endDatetime: "2026-06-01T23:59:59+0900", orderProgressList: [300,500], PaginationRequestModel: { requestRecordsAmount: 1, requestPage: 1 } }),
+        });
+        const text = await r.text();
+        return res.status(200).json({ debug: true, v3: { status: r.status, body: text.slice(0, 500) } });
+      } catch (e) { return res.status(200).json({ debug: true, v3error: e.message }); }
     }
 
     const authKey = await getRakutenAuth();
