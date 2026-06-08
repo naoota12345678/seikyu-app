@@ -3175,7 +3175,7 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
         });
         return (
         <div style={{ ...s.card, overflowX: "auto" }} className="print-area">
-          <style>{`@media print { body * { visibility: hidden; } .print-area, .print-area * { visibility: visible; } .print-area { position: absolute; left: 0; top: 0; width: 100%; } .no-print { display: none !important; } table { font-size: 10px; } th, td { padding: 3px 6px !important; } }`}</style>
+          <style>{`@media print { @page { size: A4 landscape; margin: 10mm; } body * { visibility: hidden; } .print-area, .print-area * { visibility: visible; } .print-area { position: absolute; left: 0; top: 0; width: 100%; } .no-print { display: none !important; } table { font-size: 9px; width: 100%; table-layout: fixed; } th, td { padding: 2px 4px !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } }`}</style>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
             <h3 style={{ margin: 0, color: C.navy }}>取引先別売上（12ヶ月）</h3>
             <button className="no-print" style={s.btn("light")} onClick={() => window.print()}>🖨 印刷</button>
