@@ -2844,11 +2844,12 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
     return `${y - 1}-${String(m).padStart(2, "0")}`;
   })();
   const lastYearInvTotal = invoices.filter(i => (i.date || "").startsWith(lastYearMonth)).reduce((a, i) => a + (i.total || 0), 0);
+  const lastYearHistTotal = historicalSales.filter(h => h.yearMonth === lastYearMonth).reduce((a, h) => a + (h.amount || 0), 0);
   const lastYearExtTotal = externalSales.filter(e => (e.date || "").startsWith(lastYearMonth)).reduce((a, e) => a + (e.totalAmount || 0), 0);
-  const lastYearTotal = lastYearInvTotal + lastYearExtTotal;
+  const lastYearTotal = lastYearInvTotal + lastYearHistTotal + lastYearExtTotal;
   const yoyGrowth = lastYearTotal > 0 ? ((curGrand - lastYearTotal) / lastYearTotal * 100).toFixed(1) : null;
 
-  // ── 事業部別集計（請求書＋外部売上） ──
+  // ── 事業部別集計（請求書＋外部売上＋historicalSales） ──
   const divSales = {};
   const mInvs = invoices.filter(i => (i.date || "").startsWith(viewMonth));
   mInvs.forEach(inv => {
@@ -2858,6 +2859,13 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
     divSales[divId].subtotal += (inv.subtotal || 0);
     divSales[divId].tax += (inv.tax || 0);
     divSales[divId].count++;
+  });
+  // historicalSalesは事業部不明なので「_none」（卸）に加算
+  historicalSales.filter(h => (h.yearMonth || "") === viewMonth).forEach(h => {
+    if (!divSales["_none"]) divSales["_none"] = { total: 0, subtotal: 0, tax: 0, count: 0 };
+    divSales["_none"].total += (h.amount || 0);
+    divSales["_none"].subtotal += (h.amount || 0);
+    divSales["_none"].count++;
   });
   // 外部売上をソースごとに事業部として追加
   const mExtSales = externalSales.filter(e => (e.date || "").startsWith(viewMonth));
@@ -2973,7 +2981,7 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
         </div>
         <div style={{ ...s.card, flex: "1 1 140px", textAlign: "center", margin: 0 }}>
           <div style={{ fontSize: 12, color: C.gray, marginBottom: 6 }}>卸</div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: C.navy }}>¥{fmt(mInvs.filter(i => !clients.find(c => c.id === i.clientId)?.isEvent).reduce((a, i) => a + (i.total || 0), 0))}</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: C.navy }}>¥{fmt(mInvs.filter(i => !clients.find(c => c.id === i.clientId)?.isEvent).reduce((a, i) => a + (i.total || 0), 0) + historicalSales.filter(h => h.yearMonth === viewMonth).reduce((a, h) => a + (h.amount || 0), 0))}</div>
         </div>
       </div>
       <div style={{ display: "flex", gap: 16, marginBottom: 20, flexWrap: "wrap" }}>
