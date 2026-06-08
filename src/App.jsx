@@ -3159,6 +3159,15 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
           if (!cMap[cid][m]) cMap[cid][m] = 0;
           cMap[cid][m] += (inv.total || 0);
         });
+        // historicalSales統合
+        historicalSales.forEach(h => {
+          const m = h.yearMonth || "";
+          if (!months12.includes(m)) return;
+          const cid = h.clientId || `hist_${h.clientCode}`;
+          if (!cMap[cid]) cMap[cid] = {};
+          if (!cMap[cid][m]) cMap[cid][m] = 0;
+          cMap[cid][m] += (h.amount || 0);
+        });
         const cRows = Object.entries(cMap).sort((a, b) => {
           const ta = Object.values(a[1]).reduce((s, v) => s + v, 0);
           const tb = Object.values(b[1]).reduce((s, v) => s + v, 0);
@@ -3172,7 +3181,7 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
             <tbody>
               {cRows.map(([cid, mData], idx) => {
                 const cl = clients.find(c => c.id === cid);
-                const name = cl?.name || "—";
+                const name = cl?.name || (cid.startsWith("hist_") ? (historicalSales.find(h => `hist_${h.clientCode}` === cid)?.clientName || "—") : "—");
                 const rowTotal = Object.values(mData).reduce((s, v) => s + v, 0);
                 return (
                   <tr key={cid}>
