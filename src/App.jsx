@@ -3175,12 +3175,13 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
         });
         return (
         <div style={{ ...s.card, overflowX: "auto" }} className="print-area">
-          <style>{`@media print { @page { size: A4 landscape; margin: 5mm; } body * { visibility: hidden; } .print-area, .print-area * { visibility: visible; } .print-area { position: absolute; left: 0; top: 0; width: 100%; } .no-print { display: none !important; } h3 { font-size: 11px !important; margin-bottom: 4px !important; } table { font-size: 7px; width: 100%; border-collapse: collapse; table-layout: auto; } th, td { padding: 1px 2px !important; white-space: nowrap; } th { min-width: 0 !important; } }`}</style>
+          <style>{`@media print { @page { size: A4 landscape; margin: 5mm; } body * { visibility: hidden; } .print-area, .print-area * { visibility: visible; } .print-area { position: absolute; left: 0; top: 0; width: 287mm; } .no-print { display: none !important; } h3 { font-size: 11px !important; margin-bottom: 4px !important; } table { font-size: 7px; width: 100%; border-collapse: collapse; table-layout: fixed; } th, td { padding: 1px 2px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0 !important; } col.col-name { width: 14%; } col.col-month { width: 6.3%; } col.col-total { width: 7.4%; } }`}</style>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
             <h3 style={{ margin: 0, color: C.navy }}>取引先別売上（12ヶ月）</h3>
             <button className="no-print" style={s.btn("light")} onClick={() => window.print()}>🖨 印刷</button>
           </div>
           <table style={s.table}>
+            <colgroup><col className="col-name" />{months12.map(m => <col key={m} className="col-month" />)}<col className="col-total" /></colgroup>
             <thead><tr><th style={{ ...s.th, position: "sticky", left: 0, background: C.navy, zIndex: 1 }}>取引先</th>{months12.map(m => <th key={m} style={{ ...s.th, minWidth: 90, textAlign: "right" }}>{m.slice(0,4)}/{m.slice(5)}</th>)}<th style={{ ...s.th, textAlign: "right", minWidth: 100 }}>合計</th></tr></thead>
             <tbody>
               {cRows.map(([cid, mData], idx) => {
