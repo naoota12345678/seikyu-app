@@ -3175,7 +3175,7 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
         });
         return (
         <div style={{ ...s.card, overflowX: "auto" }} className="print-area">
-          <style>{`@media print { @page { size: A4 landscape; margin: 5mm; } body * { visibility: hidden; } .print-area, .print-area * { visibility: visible; } .print-area { position: absolute; left: 0; top: 0; width: 287mm; } .no-print { display: none !important; } h3 { font-size: 11px !important; margin-bottom: 4px !important; } table { font-size: 7px; width: 100%; border-collapse: collapse; table-layout: fixed; } th, td { padding: 1px 2px !important; white-space: nowrap; min-width: 0 !important; } td:first-child, th:first-child { overflow: hidden; text-overflow: ellipsis; } col.col-name { width: 10%; } col.col-month { width: 6.8%; } col.col-total { width: 8.4%; } }`}</style>
+          <style>{`@media print { @page { size: A4 landscape; margin: 5mm; } body * { visibility: hidden; } .print-area, .print-area * { visibility: visible; } .print-area { position: absolute; left: 0; top: 0; width: 287mm; } .no-print { display: none !important; } h3 { font-size: 11px !important; margin-bottom: 4px !important; } table { font-size: 7px; width: 100%; border-collapse: collapse; table-layout: fixed; } th, td { padding: 1px 2px !important; white-space: nowrap; min-width: 0 !important; } td:first-child, th:first-child { overflow: hidden; text-overflow: ellipsis; } col.col-name { width: 10%; } col.col-month { width: 6.8%; } col.col-total { width: 8.4%; } .total-row td { font-size: 5.5px !important; } }`}</style>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
             <h3 style={{ margin: 0, color: C.navy }}>取引先別売上（12ヶ月）</h3>
             <button className="no-print" style={s.btn("light")} onClick={() => window.print()}>🖨 印刷</button>
@@ -3196,7 +3196,7 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
                   </tr>
                 );
               })}
-              <tr style={{ background: C.light }}>
+              <tr style={{ background: C.light }} className="total-row">
                 <td style={{ ...s.td, fontWeight: 700, position: "sticky", left: 0, background: C.light, zIndex: 1 }}>合計</td>
                 {months12.map(m => {
                   const mTotal = cRows.reduce((s, [, mData]) => s + (mData[m] || 0), 0);
