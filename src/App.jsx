@@ -2393,14 +2393,15 @@ function SalesReportPage({ clients, invoices, externalSales }) {
 }
 
 // ── Yearly Transition Page ────────────────────────────────────────────────────
-function YearlyTransitionPage({ clients, invoices, divisions, externalSales }) {
+function YearlyTransitionPage({ clients, invoices, divisions, externalSales, historicalSales = [] }) {
   const [startMonth, setStartMonth] = useState(1); // 期首月
   const [expandedCell, setExpandedCell] = useState(null); // "2026-03" etc
   const sources = [...new Set(externalSales.map(e => e.source))].sort();
   const sourceLabel = (src) => src === "csv" ? "店舗売上" : src === "rakuten" ? "楽天" : src === "amazon" ? "Amazon" : src === "colorme" ? "カラーミー" : src;
 
-  // 全データから年の範囲を取得
-  const allDates = [...invoices.map(i => i.date || ""), ...externalSales.map(e => e.date || "")].filter(Boolean);
+  // historicalSalesからも日付を含めて年の範囲を取得
+  const historicalDates = historicalSales.map(h => h.yearMonth ? `${h.yearMonth}-01` : "").filter(Boolean);
+  const allDates = [...invoices.map(i => i.date || ""), ...externalSales.map(e => e.date || ""), ...historicalDates].filter(Boolean);
   const allYears = [...new Set(allDates.map(d => Number(d.slice(0, 4))))].filter(Boolean).sort();
   if (!allYears.length) return <div><div style={s.pageTitle}>年度別売上推移</div><div style={{...s.card,color:C.gray,textAlign:"center"}}>データがありません</div></div>;
 
@@ -2423,12 +2424,14 @@ function YearlyTransitionPage({ clients, invoices, divisions, externalSales }) {
   const calcMonth = (ym) => {
     const mInvs = invoices.filter(i => (i.date || "").startsWith(ym));
     const invTotal = mInvs.reduce((a, i) => a + (i.total || 0), 0);
+    // historicalSales（過去取引先別売上）
+    const histTotal = historicalSales.filter(h => h.yearMonth === ym).reduce((a, h) => a + (h.amount || 0), 0);
     const ext = {};
     sources.forEach(src => {
       ext[src] = externalSales.filter(e => e.source === src && (e.date || "").startsWith(ym)).reduce((a, e) => a + (e.totalAmount || 0), 0);
     });
     const extTotal = Object.values(ext).reduce((a, v) => a + v, 0);
-    return { invTotal, ext, grandTotal: invTotal + extTotal };
+    return { invTotal, histTotal, ext, grandTotal: invTotal + histTotal + extTotal };
   };
 
   const rows = fiscalYears.map(fy => {
@@ -2449,6 +2452,14 @@ function YearlyTransitionPage({ clients, invoices, divisions, externalSales }) {
       const cid = inv.clientId;
       if (!byClient[cid]) byClient[cid] = { name: clients.find(c => c.id === cid)?.name || "—", total: 0, count: 0 };
       byClient[cid].total += (inv.total || 0);
+      byClient[cid].count++;
+    });
+    // historicalSales（過去データ）もクライアント別に統合
+    const mHist = historicalSales.filter(h => h.yearMonth === ym);
+    mHist.forEach(h => {
+      const cid = h.clientId || `hist_${h.clientCode}`;
+      if (!byClient[cid]) byClient[cid] = { name: h.clientId ? (clients.find(c => c.id === h.clientId)?.name || h.clientName) : h.clientName, total: 0, count: 0 };
+      byClient[cid].total += (h.amount || 0);
       byClient[cid].count++;
     });
     const clientRows = Object.values(byClient).sort((a, b) => b.total - a.total);
@@ -2549,7 +2560,7 @@ function YearlyTransitionPage({ clients, invoices, divisions, externalSales }) {
 }
 
 // ── Sales Page ────────────────────────────────────────────────────────────────
-function SalesPage({ clients, invoices, divisions, externalSales }) {
+function SalesPage({ clients, invoices, divisions, externalSales, historicalSales = [] }) {
   const [viewMonth, setViewMonth] = useState(today().slice(0, 7));
   const [viewMode, setViewMode] = useState("monthly"); // monthly | daily | yearly | division | client
   const [importing, setImporting] = useState(false);
@@ -2775,6 +2786,7 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
     const mInvs = invoices.filter(i => (i.date || "").startsWith(m));
     const invTotal = mInvs.reduce((a, i) => a + (i.total || 0), 0);
     const invCount = mInvs.length;
+    const histTotal = historicalSales.filter(h => h.yearMonth === m).reduce((a, h) => a + (h.amount || 0), 0);
     const ext = {};
     sources.forEach(src => {
       const srcData = externalSales.filter(e => e.source === src && (e.date || "").startsWith(m));
@@ -2782,18 +2794,20 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
     });
     const extTotal = Object.values(ext).reduce((a, v) => a + v.amount, 0);
     const extCount = Object.values(ext).reduce((a, v) => a + v.count, 0);
-    return { month: m, invTotal, invCount, ext, grandTotal: invTotal + extTotal, grandCount: invCount + extCount };
+    return { month: m, invTotal: invTotal + histTotal, invCount, ext, grandTotal: invTotal + histTotal + extTotal, grandCount: invCount + extCount };
   });
 
   // ── 年別集計 ──
   const years = [...new Set([
     ...invoices.map(i => (i.date || "").slice(0, 4)),
     ...externalSales.map(e => (e.date || "").slice(0, 4)),
+    ...historicalSales.map(h => (h.yearMonth || "").slice(0, 4)),
   ])].filter(Boolean).sort();
   const yearlyData = years.map(y => {
     const yInvs = invoices.filter(i => (i.date || "").startsWith(y));
     const invTotal = yInvs.reduce((a, i) => a + (i.total || 0), 0);
     const invCount = yInvs.length;
+    const histTotal = historicalSales.filter(h => (h.yearMonth || "").startsWith(y)).reduce((a, h) => a + (h.amount || 0), 0);
     const ext = {};
     sources.forEach(src => {
       const srcData = externalSales.filter(e => e.source === src && (e.date || "").startsWith(y));
@@ -2801,7 +2815,7 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
     });
     const extTotal = Object.values(ext).reduce((a, v) => a + v.amount, 0);
     const extCount = Object.values(ext).reduce((a, v) => a + v.count, 0);
-    return { year: y, invTotal, invCount, ext, grandTotal: invTotal + extTotal, grandCount: invCount + extCount };
+    return { year: y, invTotal: invTotal + histTotal, invCount, ext, grandTotal: invTotal + histTotal + extTotal, grandCount: invCount + extCount };
   });
 
   // ── 日別データ ──
@@ -2858,13 +2872,21 @@ function SalesPage({ clients, invoices, divisions, externalSales }) {
     divSales[`_ext_${src}`] = data;
   });
 
-  // ── 取引先別集計（請求書＋外部売上） ──
+  // ── 取引先別集計（請求書＋外部売上＋historicalSales） ──
   const clientSales = {};
   mInvs.forEach(inv => {
     const cid = inv.clientId;
     if (!clientSales[cid]) clientSales[cid] = { total: 0, subtotal: 0, count: 0 };
     clientSales[cid].total += (inv.total || 0);
     clientSales[cid].subtotal += (inv.subtotal || 0);
+    clientSales[cid].count++;
+  });
+  // historicalSales（過去データ）を取引先別に統合
+  historicalSales.filter(h => (h.yearMonth || "").startsWith(viewMonth)).forEach(h => {
+    const cid = h.clientId || `hist_${h.clientCode}`;
+    if (!clientSales[cid]) clientSales[cid] = { total: 0, subtotal: 0, count: 0 };
+    clientSales[cid].total += (h.amount || 0);
+    clientSales[cid].subtotal += (h.amount || 0);
     clientSales[cid].count++;
   });
   const clientRank = Object.entries(clientSales).sort((a, b) => b[1].total - a[1].total);
@@ -5356,6 +5378,7 @@ export default function App() {
   const [company, setCompany] = useState({});
   const [quotations, setQuotations] = useState([]);
   const [externalSales, setExternalSales] = useState([]);
+  const [historicalSales, setHistoricalSales] = useState([]);
   const [paymentHistory, setPaymentHistory] = useState([]);
   const [pendings, setPendings] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -5400,6 +5423,7 @@ export default function App() {
     unsubs.push(onSnapshot(collection(db,"clientPrices"),snap=>setClientPrices(snap.docs.map(d=>({id:d.id,...d.data()})))));
     unsubs.push(onSnapshot(collection(db,"divisions"),snap=>setDivisions(snap.docs.map(d=>({id:d.id,...d.data()})))));
     unsubs.push(onSnapshot(collection(db,"externalSales"),snap=>setExternalSales(snap.docs.map(d=>({id:d.id,...d.data()})))));
+    unsubs.push(onSnapshot(collection(db,"historicalSales"),snap=>setHistoricalSales(snap.docs.map(d=>({id:d.id,...d.data()})))));
     unsubs.push(onSnapshot(query(collection(db,"paymentHistory"),orderBy("createdAt","desc")),snap=>setPaymentHistory(snap.docs.map(d=>({id:d.id,...d.data()})))));
     unsubs.push(onSnapshot(query(collection(db,"pendingBillings"),orderBy("createdAt","desc")),snap=>setPendings(snap.docs.map(d=>({id:d.id,...d.data()})))));
     unsubs.push(onSnapshot(collection(db,"settings"),snap=>{
@@ -5479,9 +5503,9 @@ export default function App() {
         {page==="deliveries"&&<DeliveriesList clients={clients} deliveries={deliveries} products={products} invoices={invoices} company={company} balances={balances} clientPrices={clientPrices} divisions={divisions} isAdmin={isAdmin}/>}
         {page==="invoices"&&<InvoicesList clients={clients} invoices={invoices} deliveries={deliveries} company={company} balances={balances} divisions={divisions} isAdmin={isAdmin} setPage={setPage} setBalanceOpenClientId={setBalanceOpenClientId}/>}
         {page==="monthly"&&<MonthlyBilling clients={clients} deliveries={deliveries} invoices={invoices} company={company} balances={balances} divisions={divisions}/>}
-        {page==="sales"&&<SalesPage clients={clients} invoices={invoices} divisions={divisions} externalSales={externalSales}/>}
+        {page==="sales"&&<SalesPage clients={clients} invoices={invoices} divisions={divisions} externalSales={externalSales} historicalSales={historicalSales}/>}
         {page==="salesReport"&&<SalesReportPage clients={clients} invoices={invoices} externalSales={externalSales}/>}
-        {page==="yearlyTransition"&&<YearlyTransitionPage clients={clients} invoices={invoices} divisions={divisions} externalSales={externalSales}/>}
+        {page==="yearlyTransition"&&<YearlyTransitionPage clients={clients} invoices={invoices} divisions={divisions} externalSales={externalSales} historicalSales={historicalSales}/>}
         {page==="balance"&&<BalancePage clients={clients} invoices={invoices} balances={balances} company={company} paymentHistory={paymentHistory} initialOpenClientId={balanceOpenClientId} clearInitialOpenClientId={() => setBalanceOpenClientId(null)}/>}
         {page==="clients"&&<ClientsPage clients={clients} divisions={divisions} isAdmin={isAdmin} deliveries={deliveries}/>}
         {page==="products"&&<ProductsPage products={products} company={company} isAdmin={isAdmin}/>}
