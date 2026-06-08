@@ -3174,8 +3174,12 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
           return tb - ta;
         });
         return (
-        <div style={{ ...s.card, overflowX: "auto" }}>
-          <h3 style={{ margin: "0 0 16px", color: C.navy }}>取引先別売上（12ヶ月）</h3>
+        <div style={{ ...s.card, overflowX: "auto" }} className="print-area">
+          <style>{`@media print { body * { visibility: hidden; } .print-area, .print-area * { visibility: visible; } .print-area { position: absolute; left: 0; top: 0; width: 100%; } .no-print { display: none !important; } table { font-size: 10px; } th, td { padding: 3px 6px !important; } }`}</style>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <h3 style={{ margin: 0, color: C.navy }}>取引先別売上（12ヶ月）</h3>
+            <button className="no-print" style={s.btn("light")} onClick={() => window.print()}>🖨 印刷</button>
+          </div>
           <table style={s.table}>
             <thead><tr><th style={{ ...s.th, position: "sticky", left: 0, background: C.navy, zIndex: 1 }}>取引先</th>{months12.map(m => <th key={m} style={{ ...s.th, minWidth: 90, textAlign: "right" }}>{m.slice(0,4)}/{m.slice(5)}</th>)}<th style={{ ...s.th, textAlign: "right", minWidth: 100 }}>合計</th></tr></thead>
             <tbody>
