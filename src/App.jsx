@@ -2219,7 +2219,7 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
 }
 
 // ── Sales Report Page ─────────────────────────────────────────────────────────
-function SalesReportPage({ clients, invoices, externalSales }) {
+function SalesReportPage({ clients, invoices, externalSales, historicalSales = [] }) {
   const [monthFrom, setMonthFrom] = useState(today().slice(0, 7));
   const [monthTo, setMonthTo] = useState(today().slice(0, 7));
 
@@ -2264,7 +2264,7 @@ function SalesReportPage({ clients, invoices, externalSales }) {
   const shopTotal = shopExt.reduce((a, e) => a + (e.totalAmount || 0), 0);
   const shopCount = shopExt.reduce((a, e) => a + (e.orderCount || 0), 0);
 
-  // 卸（isEvent でない取引先）
+  // 卸（isEvent でない取引先 + historicalSales）
   const wholesaleInvs = periodInvs.filter(i => !clients.find(c => c.id === i.clientId)?.isEvent);
   const wholesaleByClient = {};
   wholesaleInvs.forEach(i => {
@@ -2273,8 +2273,16 @@ function SalesReportPage({ clients, invoices, externalSales }) {
     wholesaleByClient[cid].amount += (i.total || 0);
     wholesaleByClient[cid].count++;
   });
+  // historicalSales統合
+  const periodHist = historicalSales.filter(h => months.includes(h.yearMonth));
+  periodHist.forEach(h => {
+    const cid = h.clientId || `hist_${h.clientCode}`;
+    if (!wholesaleByClient[cid]) wholesaleByClient[cid] = { amount: 0, count: 0 };
+    wholesaleByClient[cid].amount += (h.amount || 0);
+    wholesaleByClient[cid].count++;
+  });
   const wholesaleRows = Object.entries(wholesaleByClient).map(([cid, d]) => ({
-    name: clients.find(c => c.id === cid)?.name || "—", ...d
+    name: clients.find(c => c.id === cid)?.name || (cid.startsWith("hist_") ? (historicalSales.find(h => `hist_${h.clientCode}` === cid)?.clientName || "—") : "—"), ...d
   })).sort((a, b) => b.amount - a.amount);
   const wholesaleTotal = wholesaleRows.reduce((a, r) => a + r.amount, 0);
   const wholesaleCount = wholesaleRows.reduce((a, r) => a + r.count, 0);
@@ -5526,7 +5534,7 @@ export default function App() {
         {page==="invoices"&&<InvoicesList clients={clients} invoices={invoices} deliveries={deliveries} company={company} balances={balances} divisions={divisions} isAdmin={isAdmin} setPage={setPage} setBalanceOpenClientId={setBalanceOpenClientId}/>}
         {page==="monthly"&&<MonthlyBilling clients={clients} deliveries={deliveries} invoices={invoices} company={company} balances={balances} divisions={divisions}/>}
         {page==="sales"&&<SalesPage clients={clients} invoices={invoices} divisions={divisions} externalSales={externalSales} historicalSales={historicalSales}/>}
-        {page==="salesReport"&&<SalesReportPage clients={clients} invoices={invoices} externalSales={externalSales}/>}
+        {page==="salesReport"&&<SalesReportPage clients={clients} invoices={invoices} externalSales={externalSales} historicalSales={historicalSales}/>}
         {page==="yearlyTransition"&&<YearlyTransitionPage clients={clients} invoices={invoices} divisions={divisions} externalSales={externalSales} historicalSales={historicalSales}/>}
         {page==="balance"&&<BalancePage clients={clients} invoices={invoices} balances={balances} company={company} paymentHistory={paymentHistory} initialOpenClientId={balanceOpenClientId} clearInitialOpenClientId={() => setBalanceOpenClientId(null)}/>}
         {page==="clients"&&<ClientsPage clients={clients} divisions={divisions} isAdmin={isAdmin} deliveries={deliveries}/>}
