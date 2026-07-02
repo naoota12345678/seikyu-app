@@ -117,6 +117,12 @@ function getAllClosingPeriods(yearMonth, closingDays) {
   return periods;
 }
 
+// 請求書の売上計上日：締め請求は締め期間末(closingPeriod.end)、無ければ発行日(date)。
+// 締め請求を「発行日の月」でなく「締め期間の月」で集計するための共通ヘルパー。
+const invBillDate = (i) => (i && (i.closingPeriod?.end || i.date)) || "";
+const invMonth = (i) => invBillDate(i).slice(0, 7);
+const invYear = (i) => invBillDate(i).slice(0, 4);
+
 // 次回の締日日付を計算（今日以降で最も近い締日）
 function getNextClosingDate(closingDays) {
   if (!closingDays || !closingDays.length) return "";
@@ -416,7 +422,7 @@ function buildMeisaiHTML(inv, clients, co, bal) {
   const refItems = typeof inv.deliveryRefItems === "string" ? JSON.parse(inv.deliveryRefItems) : (inv.deliveryRefItems || []);
 
   return `<h1>請　求　明　細　書</h1>
-  <div class="doc-info"><span>${inv.date} 締切分　　No. ${inv.docNo}</span></div>
+  <div class="doc-info"><span>${(inv.closingPeriod?.end || inv.date)} 締切分　　No. ${inv.docNo}</span></div>
   <div class="hd">
     <div class="cl-info">
       ${cl.zip ? `<div class="cl-zip">${cl.zip}</div>` : ""}
@@ -1142,7 +1148,7 @@ function Dashboard({ clients, deliveries, invoices, balances }) {
   const totalBalance = Object.values(balances).reduce((a, b) => a + (b.currentBalance || 0), 0);
   const thisMonth = new Date().toISOString().slice(0, 7);
   const monthDel = deliveries.filter(d => (d.date || "").startsWith(thisMonth));
-  const monthInv = invoices.filter(i => (i.date || "").startsWith(thisMonth));
+  const monthInv = invoices.filter(i => invMonth(i) === thisMonth);
   const monthSales = monthInv.reduce((a, i) => a + (i.total || 0), 0);
   const overdue = invoices.filter(i => i.status === "unpaid" && i.dueDate && i.dueDate < today());
   return (
@@ -2238,10 +2244,7 @@ function SalesReportPage({ clients, invoices, externalSales, historicalSales = [
   const periodLabel = monthFrom === monthTo ? monthFrom : `${monthFrom} ～ ${monthTo}`;
 
   // 期間内の請求書
-  const periodInvs = invoices.filter(i => {
-    const m = (i.date || "").slice(0, 7);
-    return months.includes(m);
-  });
+  const periodInvs = invoices.filter(i => months.includes(invMonth(i)));
 
   // 期間内の外部売上
   const periodExt = externalSales.filter(e => {
@@ -2430,7 +2433,7 @@ function YearlyTransitionPage({ clients, invoices, divisions, externalSales, his
   };
 
   const calcMonth = (ym) => {
-    const mInvs = invoices.filter(i => (i.date || "").startsWith(ym));
+    const mInvs = invoices.filter(i => invMonth(i) === ym);
     const invTotal = mInvs.reduce((a, i) => a + (i.total || 0), 0);
     // historicalSales（過去取引先別売上）
     const histTotal = historicalSales.filter(h => h.yearMonth === ym).reduce((a, h) => a + (h.amount || 0), 0);
@@ -2454,7 +2457,7 @@ function YearlyTransitionPage({ clients, invoices, divisions, externalSales, his
 
   // 内訳表示
   const renderBreakdown = (ym) => {
-    const mInvs = invoices.filter(i => (i.date || "").startsWith(ym));
+    const mInvs = invoices.filter(i => invMonth(i) === ym);
     const byClient = {};
     mInvs.forEach(inv => {
       const cid = inv.clientId;
@@ -2767,11 +2770,12 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
   function buildDailyMap(monthStr) {
     const map = {}; // { "2026-03-12": { invoice: {amount,count}, rakuten: {amount,count}, ... } }
     // 請求書売上
-    invoices.filter(i => (i.date || "").startsWith(monthStr)).forEach(inv => {
-      if (!map[inv.date]) map[inv.date] = {};
-      if (!map[inv.date].invoice) map[inv.date].invoice = { amount: 0, count: 0 };
-      map[inv.date].invoice.amount += (inv.total || 0);
-      map[inv.date].invoice.count++;
+    invoices.filter(i => invMonth(i) === monthStr).forEach(inv => {
+      const bd = invBillDate(inv);
+      if (!map[bd]) map[bd] = {};
+      if (!map[bd].invoice) map[bd].invoice = { amount: 0, count: 0 };
+      map[bd].invoice.amount += (inv.total || 0);
+      map[bd].invoice.count++;
     });
     // 外部売上
     externalSales.filter(e => (e.date || "").startsWith(monthStr)).forEach(e => {
@@ -2791,7 +2795,7 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
   }
 
   const monthlyData = months.map(m => {
-    const mInvs = invoices.filter(i => (i.date || "").startsWith(m));
+    const mInvs = invoices.filter(i => invMonth(i) === m);
     const invTotal = mInvs.reduce((a, i) => a + (i.total || 0), 0);
     const invCount = mInvs.length;
     const histTotal = historicalSales.filter(h => h.yearMonth === m).reduce((a, h) => a + (h.amount || 0), 0);
@@ -2807,12 +2811,12 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
 
   // ── 年別集計 ──
   const years = [...new Set([
-    ...invoices.map(i => (i.date || "").slice(0, 4)),
+    ...invoices.map(i => invYear(i)),
     ...externalSales.map(e => (e.date || "").slice(0, 4)),
     ...historicalSales.map(h => (h.yearMonth || "").slice(0, 4)),
   ])].filter(Boolean).sort();
   const yearlyData = years.map(y => {
-    const yInvs = invoices.filter(i => (i.date || "").startsWith(y));
+    const yInvs = invoices.filter(i => invYear(i) === y);
     const invTotal = yInvs.reduce((a, i) => a + (i.total || 0), 0);
     const invCount = yInvs.length;
     const histTotal = historicalSales.filter(h => (h.yearMonth || "").startsWith(y)).reduce((a, h) => a + (h.amount || 0), 0);
@@ -2851,7 +2855,7 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
     const [y, m] = viewMonth.split("-").map(Number);
     return `${y - 1}-${String(m).padStart(2, "0")}`;
   })();
-  const lastYearInvTotal = invoices.filter(i => (i.date || "").startsWith(lastYearMonth)).reduce((a, i) => a + (i.total || 0), 0);
+  const lastYearInvTotal = invoices.filter(i => invMonth(i) === lastYearMonth).reduce((a, i) => a + (i.total || 0), 0);
   const lastYearHistTotal = historicalSales.filter(h => h.yearMonth === lastYearMonth).reduce((a, h) => a + (h.amount || 0), 0);
   const lastYearExtTotal = externalSales.filter(e => (e.date || "").startsWith(lastYearMonth)).reduce((a, e) => a + (e.totalAmount || 0), 0);
   const lastYearTotal = lastYearInvTotal + lastYearHistTotal + lastYearExtTotal;
@@ -2859,7 +2863,7 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
 
   // ── 事業部別集計（請求書＋外部売上＋historicalSales） ──
   const divSales = {};
-  const mInvs = invoices.filter(i => (i.date || "").startsWith(viewMonth));
+  const mInvs = invoices.filter(i => invMonth(i) === viewMonth);
   mInvs.forEach(inv => {
     const divId = inv.divisionId || "_none";
     if (!divSales[divId]) divSales[divId] = { total: 0, subtotal: 0, tax: 0, count: 0 };
@@ -3091,7 +3095,7 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
         }
         const divMap = {};
         invoices.forEach(inv => {
-          const m = (inv.date || "").slice(0, 7);
+          const m = invMonth(inv);
           if (!months12.includes(m)) return;
           const cl = clients.find(c => c.id === inv.clientId);
           const divId = inv.divisionId || cl?.divisionId || "_none";
@@ -3160,7 +3164,7 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
         }
         const cMap = {};
         invoices.forEach(inv => {
-          const m = (inv.date || "").slice(0, 7);
+          const m = invMonth(inv);
           if (!months12.includes(m)) return;
           const cid = inv.clientId;
           if (!cMap[cid]) cMap[cid] = {};

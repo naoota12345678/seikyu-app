@@ -25,3 +25,8 @@ dist-ssr
 
 .vercel
 .env*.local
+.env
+.env.production
+
+# 本番データのローカルバックアップ（機密・コミット禁止）
+_backups/

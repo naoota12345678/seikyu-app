@@ -99,7 +99,7 @@ async function sendEmail(to, subject, html) {
   return res.ok;
 }
 
-async function createInvoiceAndProcess({ clientId, divisionId, items, deliveryRefs, deliveryRefItems, deliveryIds, type, sendMode, billingDay }) {
+async function createInvoiceAndProcess({ clientId, divisionId, items, deliveryRefs, deliveryRefItems, deliveryIds, type, sendMode, billingDay, closingPeriod }) {
   const { sub, tax, total } = totalFromItems(items);
   const docNo = await genDocNo("INV");
 
@@ -108,6 +108,7 @@ async function createInvoiceAndProcess({ clientId, divisionId, items, deliveryRe
     date: todayStr(), dueDate: nextMonthEnd(todayStr()),
     billingType: type === "recurring" ? "recurring" : "closing",
     closingDay: billingDay,
+    ...(closingPeriod ? { closingPeriod } : {}),
     deliveryRefs: deliveryRefs || [],
     deliveryRefItems: Array.isArray(deliveryRefItems) ? JSON.stringify(deliveryRefItems) : (deliveryRefItems || "[]"),
     items, subtotal: sub, tax, total,
@@ -262,6 +263,7 @@ export default async function handler(req, res) {
               deliveryIds: dels.map(d => d.id),
               type: "closing", sendMode: client.sendMode || "auto",
               billingDay: cd,
+              closingPeriod: { start: period.start, end: period.end },
             });
             results.closing.push({ client: client.name, ...result });
           }
