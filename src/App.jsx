@@ -1211,6 +1211,8 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
     if (dateTo && d.date > dateTo) return false;
     return true;
   }).sort((a, b) => sortOrder === "desc" ? (b.date || "").localeCompare(a.date || "") : (a.date || "").localeCompare(b.date || ""));
+  // 絞り込み後（検索・期間・状態すべて反映）の金額合計
+  const filteredTotal = filtered.reduce((a, d) => a + (d.total || 0), 0);
   const deleteDSingle = async (id) => {
     const del = deliveries.find(d => d.id === id);
     await deleteDoc(doc(db, "deliveries", id));
@@ -1378,6 +1380,8 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
         <span style={{fontSize:13,color:C.gray}}>〜</span>
         <input type="date" style={{...s.input,width:150}} value={dateTo} onChange={e=>setDateTo(e.target.value)} />
         {(dateFrom||dateTo) && <button style={{...s.btn("light"),padding:"4px 10px",fontSize:12}} onClick={()=>{setDateFrom("");setDateTo("");}}>クリア</button>}
+        <span style={{marginLeft:"auto",fontSize:13,color:C.gray}}>表示 {filtered.length}件</span>
+        <span style={{fontSize:15,fontWeight:700,color:C.navy}}>合計 ¥{fmt(filteredTotal)}</span>
       </div>
       <div style={s.card}>
         {isAdmin && selected.size > 0 && (
@@ -1415,6 +1419,13 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
               );
             })}
           </tbody>
+          <tfoot>
+            <tr>
+              <td style={{ ...s.td, textAlign: "right", fontWeight: 700 }} colSpan={(isAdmin ? 1 : 0) + 3}>合計（{filtered.length}件）</td>
+              <td style={{ ...s.td, fontWeight: 700, color: C.navy }}>¥{fmt(filteredTotal)}</td>
+              <td style={s.td} colSpan={2}></td>
+            </tr>
+          </tfoot>
         </table>
       </div>
       {showForm && <DeliveryForm clients={clients} products={products} deliveries={deliveries} clientPrices={clientPrices} divisions={divisions} company={company} invoices={invoices} balances={balances} editing={editing}
