@@ -1,0 +1,15 @@
+rules_version = '2';
+
+// seikyu 本番Firestore アクセス制御
+// 方針: ログイン必須（認証済みユーザーのみ読み書き可）。
+//   - クライアント(ブラウザ)からのアクセスは Firebase Authentication のログインを要求する。
+//   - サーバ側の自動処理(cron-billing / *-sync / manage-user)は Admin SDK 経由のため
+//     このルールを迂回する(サービスアカウント権限)。よってサーバ処理には影響しない。
+// 背景: 2026-07-03、ルール未設定で誰でも無認証に読み書き可能だった状態を是正(KY-005)。
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
