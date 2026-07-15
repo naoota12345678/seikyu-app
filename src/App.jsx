@@ -20,9 +20,35 @@ const fmt = (n) => Number(n || 0).toLocaleString("ja-JP");
 const today = () => new Date().toISOString().split("T")[0];
 const getEmails = (cl) => [cl?.email, cl?.email2, cl?.email3, cl?.email4].filter(Boolean);
 const getEmailStr = (cl) => getEmails(cl).join(", ");
-const nextMonthEnd = (dateStr) => {
-  const d = new Date(dateStr || today());
-  return new Date(d.getFullYear(), d.getMonth() + 2, 0).toISOString().split("T")[0];
+// 基準日から months ヶ月後の月末日を返す（ローカル日付で組み立て。toISOString はUTC変換で1日ずれるため使わない）
+const monthEndOffset = (dateStr, months) => {
+  const [y, m] = (dateStr || today()).split("-").map(Number);
+  const d = new Date(y, (m - 1) + months + 1, 0);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+const nextMonthEnd = (dateStr) => monthEndOffset(dateStr, 1);
+// 取引先の支払サイト（1=翌月末, 2=翌々月末, 3=3ヶ月後末）に応じた支払期限
+const dueDateFor = (cl, baseDate) => monthEndOffset(baseDate, Number(cl?.paymentMonths) || 1);
+// 検索用の文字正規化：全角/半角・大文字小文字・ひらがな/カタカナ・空白を吸収
+const normSearch = (str) => String(str || "")
+  .normalize("NFKC")
+  .toLowerCase()
+  .replace(/[ぁ-ゖ]/g, ch => String.fromCharCode(ch.charCodeAt(0) + 0x60))
+  .replace(/\s+/g, "");
+const matchSearch = (query, ...targets) => {
+  const q = normSearch(query);
+  if (!q) return true;
+  return targets.some(t => normSearch(t).includes(q));
+};
+// number入力でマウスホイールによる値の増減を防ぐ（スクロール中の誤入力対策）
+const noWheel = { onWheel: (e) => e.currentTarget.blur() };
+// 販売単価の決定：取引先別単価 > 取引先の掛け率（定価×%） > 商品定価
+const resolvePrice = (product, client, clientPrices) => {
+  const cp = clientPrices?.find(c => c.clientId === client?.id && c.productId === product.id);
+  if (cp) return cp.price;
+  const rate = Number(client?.ratePercent);
+  if (rate > 0) return Math.round((product.price || 0) * rate / 100);
+  return product.price || 0;
 };
 // 税率別に集計: items=[{qty,price,taxRate},...] → {10:{sub,tax}, 8:{sub,tax}, ...}
 function calcTaxByRate(items) {
@@ -122,6 +148,36 @@ function getAllClosingPeriods(yearMonth, closingDays) {
 const invBillDate = (i) => (i && (i.closingPeriod?.end || i.date)) || "";
 const invMonth = (i) => invBillDate(i).slice(0, 7);
 const invYear = (i) => invBillDate(i).slice(0, 4);
+
+// 請求明細書のサマリー（前回請求額・期間中入金・振込手数料）を元帳（全請求＋全入金）から再計算する。
+// 印刷時点の残高スナップショットではなく履歴から求めるので、過去の請求書を再印刷しても正しい値になる。
+function calcMeisaiSummary(inv, invoices, payments, balances) {
+  if (!inv || !invoices || !invoices.length) return null;
+  const clientId = inv.clientId;
+  const billDate = invBillDate(inv);
+  if (!billDate) return null;
+  const invDue = (i) => (i.total || 0) - (i.withholding ? (i.withholdingAmount || 0) : 0);
+  const before = (a, b) => { const da = invBillDate(a), db2 = invBillDate(b); return da < db2 || (da === db2 && (a.docNo || "") < (b.docNo || "")); };
+  const clientInvs = invoices.filter(i => i.clientId === clientId);
+  const prevInvs = clientInvs.filter(i => i.id !== inv.id && before(i, inv));
+  const prevBillDate = prevInvs.reduce((m, i) => { const d = invBillDate(i); return d > m ? d : m; }, "");
+  const opening = balances?.[clientId]?.openingBalance || 0;
+  const pays = (payments || []).filter(p => p.clientId === clientId);
+  const payClear = (p) => (p.amount || 0) + (p.fee || 0);
+  const paysUpToPrev = pays.filter(p => (p.date || "") <= prevBillDate);
+  const prevRequest = opening
+    + prevInvs.reduce((a, i) => a + invDue(i), 0)
+    - paysUpToPrev.reduce((a, p) => a + payClear(p), 0);
+  const periodPays = pays
+    .filter(p => (p.date || "") > prevBillDate && (p.date || "") <= billDate)
+    .sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  return {
+    prevRequest,
+    paymentAmount: periodPays.reduce((a, p) => a + (p.amount || 0), 0),
+    feeAmount: periodPays.reduce((a, p) => a + (p.fee || 0), 0),
+    payments: periodPays,
+  };
+}
 
 // 次回の締日日付を計算（今日以降で最も近い締日）
 function getNextClosingDate(closingDays) {
@@ -377,12 +433,13 @@ function buildDeliveryHTML(d, clients, co) {
     "下記の通り納品いたします", d.items || [], false, false, d.notes, false, null, null);
 }
 
-function buildInvoiceHTML(inv, clients, co, bal) {
+function buildInvoiceHTML(inv, clients, co, bal, opts = {}) {
   const cl = clients.find(c => c.id === inv.clientId) || {};
   const allItems = inv.items || [];
   const { sub, tax } = totalFromItems(allItems);
-  const prev = bal?.prevBalance || 0;
-  const paid = bal?.paidAmount || 0;
+  const summary = opts.summary || null;
+  const prev = summary ? summary.prevRequest : (bal?.prevBalance || 0);
+  const paid = summary ? (summary.paymentAmount + summary.feeAmount) : (bal?.paidAmount || 0);
   const carry = prev - paid;
   const total = carry + sub + tax;
   const summaryHTML = `<table class="bt"><thead><tr>
@@ -405,21 +462,72 @@ function buildInvoiceHTML(inv, clients, co, bal) {
   <p class="greeting">下記の通り御請求申し上げます</p>
   ${summaryHTML}
   ${detailTableHTML(allItems, false, null, null)}
+  ${inv.notes ? `<div style="margin-top:6px;font-size:11px;color:#555">備考：${inv.notes}</div>` : ""}
   ${bankFooterHTML(co)}`;
 }
 
-function buildMeisaiHTML(inv, clients, co, bal) {
+// 請求明細書の明細テーブル：納品を日付順に並べ、納品ごとに小計、期間中の入金・振込手数料も行として差し込む
+function meisaiDetailHTML(inv, deliveries, summary) {
+  const allItems = inv.items || [];
+  const refs = inv.deliveryRefs || [];
+  const refItems = typeof inv.deliveryRefItems === "string" ? JSON.parse(inv.deliveryRefItems) : (inv.deliveryRefItems || []);
+  if (!refs.length) return detailTableHTML(allItems, true, refs, refItems);
+
+  // 納品グループ（納品日で日付順ソート）
+  const delGroups = refs.map((ref, ri) => {
+    const del = (deliveries || []).find(d => d.docNo === ref);
+    return { kind: "delivery", date: del?.date || "", ref, items: (refItems[ri] && refItems[ri].length ? refItems[ri] : del?.items) || [], notes: del?.notes || "" };
+  });
+  // 期間中の入金（サマリーから）
+  const payRows = (summary?.payments || []).map(p => ({ kind: "payment", date: p.date || "", amount: p.amount || 0, fee: p.fee || 0 }));
+  const merged = [...delGroups, ...payRows].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+
+  const rows = [];
+  merged.forEach(g => {
+    if (g.kind === "payment") {
+      rows.push(`<tr class="pay-row"><td class="nr" style="font-size:10px">${g.date}</td><td>御　入　金（振込）</td><td></td><td></td><td></td><td class="nr">▲${fmt(g.amount)}</td><td></td></tr>`);
+      if (g.fee > 0) rows.push(`<tr class="pay-row"><td></td><td>振込手数料（当社負担）</td><td></td><td></td><td></td><td class="nr">▲${fmt(g.fee)}</td><td></td></tr>`);
+      return;
+    }
+    const { total: gTotal } = totalFromItems(g.items);
+    g.items.forEach((i, ii) => {
+      const a = Number(i.qty || 0) * Number(i.price || 0);
+      rows.push(`<tr><td style="font-size:10px">${ii === 0 ? `${g.date}<br><span style="font-size:8px;color:#666">${g.ref}</span>` : ""}</td><td>${i.name || ""}</td><td class="nr">${i.qty || ""}</td><td>${i.unit || ""}</td><td class="nr">${fmt(i.price)}</td><td class="nr">${fmt(a)}</td><td class="tax-label">${taxLabel(i.taxRate)}</td></tr>`);
+    });
+    rows.push(`<tr class="subtotal-row"><td></td><td colspan="4" style="text-align:right;color:#555">＊ ${g.date} 納品分 小計</td><td class="nr">${fmt(gTotal)}</td><td></td></tr>`);
+    if (g.notes) rows.push(`<tr><td></td><td colspan="6" style="font-size:9px;color:#666">備考：${g.notes}</td></tr>`);
+  });
+
+  const groups = calcTaxByRate(allItems);
+  const rates = Object.keys(groups).sort((a, b) => Number(b) - Number(a));
+  const { sub: totalSub, tax: totalTax } = totalFromItems(allItems);
+  const taxRows = [];
+  taxRows.push(`<tr><td colspan="6">合計税抜き額</td><td class="nr">${fmt(totalSub)}</td></tr>`);
+  rates.forEach(r => {
+    const isReduced = Number(r) === 8;
+    taxRows.push(`<tr><td colspan="6">消費税（${isReduced ? "軽減" : ""}${r}%）</td><td class="nr">${fmt(groups[r].tax)}</td></tr>`);
+  });
+  taxRows.push(`<tr><td colspan="6"><strong>総　合　計</strong></td><td class="nr"><strong>${fmt(totalSub + totalTax)}</strong></td></tr>`);
+  const emptyCount = Math.max(0, DETAIL_ROWS - rows.length - taxRows.length);
+  const emptyRows = Array(emptyCount).fill(`<tr>${Array(7).fill("<td></td>").join("")}</tr>`);
+  return `<table class="it"><thead><tr>
+    <th style="width:14%">納品日/伝票番号</th><th style="width:28%">商品コード/商品名</th><th style="width:7%">数量</th><th style="width:6%">単位</th><th style="width:12%">単　価</th><th style="width:14%">金　額</th><th style="width:9%">備　考</th>
+  </tr></thead><tbody>
+    ${rows.join("")}${emptyRows.join("")}${taxRows.join("")}
+  </tbody></table>`;
+}
+
+function buildMeisaiHTML(inv, clients, co, bal, opts = {}) {
   const cl = clients.find(c => c.id === inv.clientId) || {};
   const allItems = inv.items || [];
   const { sub, tax, total: invTotal } = totalFromItems(allItems);
-  const groups = calcTaxByRate(allItems);
-  const rates = Object.keys(groups).sort((a, b) => Number(b) - Number(a));
-  const prev = bal?.prevBalance || 0;
-  const paid = bal?.paidAmount || 0;
-  const carry = prev - paid;
+  const summary = opts.summary || null;
+  // 履歴から再計算したサマリーがあればそれを優先。無ければ従来通り現在残高（レガシー動作）
+  const prev = summary ? summary.prevRequest : (bal?.prevBalance || 0);
+  const paid = summary ? summary.paymentAmount : (bal?.paidAmount || 0);
+  const fee = summary ? summary.feeAmount : 0;
+  const carry = prev - paid - fee;
   const total = carry + invTotal;
-  const refs = inv.deliveryRefs || [];
-  const refItems = typeof inv.deliveryRefItems === "string" ? JSON.parse(inv.deliveryRefItems) : (inv.deliveryRefItems || []);
 
   return `<h1>請　求　明　細　書</h1>
   <div class="doc-info"><span>${(inv.closingPeriod?.end || inv.date)} 締切分　　No. ${inv.docNo}</span></div>
@@ -433,13 +541,14 @@ function buildMeisaiHTML(inv, clients, co, bal) {
   </div>
   <p class="greeting">下記の通り御請求申し上げます</p>
   <table class="bt"><thead><tr>
-    <th>前回御請求額</th><th>御入金額</th><th>繰越金額</th><th>今回御買上額</th><th>消費税</th><th>今回御請求額</th>
+    <th>前回御請求額</th><th>御入金額</th>${fee > 0 ? "<th>振込手数料</th>" : ""}<th>繰越金額</th><th>今回御買上額</th><th>消費税</th><th>今回御請求額</th>
   </tr></thead><tbody><tr>
-    <td>${fmt(prev)}</td><td>${fmt(paid)}</td><td>${fmt(carry)}</td>
+    <td>${fmt(prev)}</td><td>${fmt(paid)}</td>${fee > 0 ? `<td>${fmt(fee)}</td>` : ""}<td>${fmt(carry)}</td>
     <td>${fmt(sub)}</td><td>${fmt(tax)}</td>
     <td class="total-cell">${fmt(total)}</td>
   </tr></tbody></table>
-  ${detailTableHTML(allItems, true, refs, refItems)}
+  ${meisaiDetailHTML(inv, opts.deliveries, summary)}
+  ${inv.notes ? `<div style="margin-top:6px;font-size:11px;color:#555">備考：${inv.notes}</div>` : ""}
   ${bankFooterHTML(co)}`;
 }
 
@@ -451,20 +560,20 @@ function printDelivery(d, clients, co) {
   openPrint(docHTML("納品書", buildDeliveryHTML(d, clients, co)));
 }
 
-function printInvoice(inv, clients, co, bal) {
-  openPrint(docHTML("請求書", buildInvoiceHTML(inv, clients, co, bal)));
+function printInvoice(inv, clients, co, bal, opts) {
+  openPrint(docHTML("請求書", buildInvoiceHTML(inv, clients, co, bal, opts)));
 }
 
-function printCombined(d, inv, clients, co, bal) {
-  openPrint(docHTML("納品書＋請求書", `<div class="pb">${buildDeliveryHTML(d, clients, co)}</div>${buildInvoiceHTML(inv, clients, co, bal)}`));
+function printCombined(d, inv, clients, co, bal, opts) {
+  openPrint(docHTML("納品書＋請求書", `<div class="pb">${buildDeliveryHTML(d, clients, co)}</div>${buildInvoiceHTML(inv, clients, co, bal, opts)}`));
 }
 
-function printMeisai(inv, clients, co, bal) {
-  openPrint(docHTML("請求明細書", buildMeisaiHTML(inv, clients, co, bal)));
+function printMeisai(inv, clients, co, bal, opts) {
+  openPrint(docHTML("請求明細書", buildMeisaiHTML(inv, clients, co, bal, opts)));
 }
 
 // ── Print Mode Modal ──────────────────────────────────────────────────────────
-function PrintModeModal({ invoice, delivery, clients, company, balances, divisions, onClose }) {
+function PrintModeModal({ invoice, delivery, clients, company, balances, divisions, invoices = [], paymentHistory = [], deliveries = [], onClose }) {
   const [pdfLoading, setPdfLoading] = useState(false);
   const bal = balances[invoice?.clientId];
   const docData = invoice || delivery || {};
@@ -472,11 +581,15 @@ function PrintModeModal({ invoice, delivery, clients, company, balances, divisio
   const co = div ? { ...company, ...Object.fromEntries(Object.entries(div).filter(([,v]) => v)) } : company;
   const cl = clients.find(c => c.id === docData.clientId) || {};
   const docNo = invoice?.docNo || delivery?.docNo || "doc";
+  // 明細書サマリーは元帳（全請求＋全入金）から再計算。データが無いときはnull（従来動作にフォールバック）
+  const meisaiOpts = invoice ? { summary: calcMeisaiSummary(invoice, invoices, paymentHistory, balances), deliveries } : {};
+  const isClosingInv = invoice && (invoice.billingType === "closing" || invoice.billingType === "monthly");
   const modes = [
+    ...(isClosingInv ? [{ id: "meisai", label: "📋 請求明細書（推奨）", desc: "納品を日付順に明細化・入金/繰越つき。締め請求はこちらをお使いください", ok: true }] : []),
     { id: "invoice", label: "🧾 請求書のみ", desc: "請求書を単体で印刷", ok: !!invoice },
     { id: "delivery", label: "📦 納品書のみ", desc: "納品書を単体で印刷", ok: !!delivery },
     { id: "combined", label: "📄 納品書＋請求書同時", desc: "2枚同時印刷（納品書→請求書）", ok: !!delivery && !!invoice },
-    { id: "meisai", label: "📋 請求明細書", desc: "残高管理付き（前回残高・繰越・今回請求）", ok: !!invoice },
+    ...(!isClosingInv ? [{ id: "meisai", label: "📋 請求明細書", desc: "残高管理付き（前回残高・繰越・今回請求）", ok: !!invoice }] : []),
   ];
   const pdfModes = [
     { id: "pdf-invoice", label: "📥 請求書PDF", desc: "請求書をPDFでダウンロード", ok: !!invoice },
@@ -484,10 +597,10 @@ function PrintModeModal({ invoice, delivery, clients, company, balances, divisio
     { id: "pdf-meisai", label: "📥 請求明細書PDF", desc: "請求明細書をPDFでダウンロード", ok: !!invoice },
   ];
   const handle = (id) => {
-    if (id === "invoice") printInvoice(invoice, clients, co, bal);
+    if (id === "invoice") printInvoice(invoice, clients, co, bal, meisaiOpts);
     else if (id === "delivery") printDelivery(delivery, clients, co);
-    else if (id === "combined") printCombined(delivery, invoice, clients, co, bal);
-    else if (id === "meisai") printMeisai(invoice, clients, co, bal);
+    else if (id === "combined") printCombined(delivery, invoice, clients, co, bal, meisaiOpts);
+    else if (id === "meisai") printMeisai(invoice, clients, co, bal, meisaiOpts);
     onClose();
   };
   const handlePDF = async (id, download = true) => {
@@ -497,7 +610,7 @@ function PrintModeModal({ invoice, delivery, clients, company, balances, divisio
       let result, type, storagePath;
       if (id === "pdf-invoice") {
         type = "請求書";
-        result = await generatePDF(buildInvoiceHTML(invoice, clients, co, bal), `請求書_${safeName}_${docNo}.pdf`);
+        result = await generatePDF(buildInvoiceHTML(invoice, clients, co, bal, meisaiOpts), `請求書_${safeName}_${docNo}.pdf`);
         storagePath = `pdfs/invoices/${docNo}.pdf`;
       } else if (id === "pdf-delivery") {
         type = "納品書";
@@ -505,7 +618,7 @@ function PrintModeModal({ invoice, delivery, clients, company, balances, divisio
         storagePath = `pdfs/deliveries/${delivery.docNo}.pdf`;
       } else if (id === "pdf-meisai") {
         type = "請求明細書";
-        result = await generatePDF(buildMeisaiHTML(invoice, clients, co, bal), `請求明細書_${safeName}_${docNo}.pdf`);
+        result = await generatePDF(buildMeisaiHTML(invoice, clients, co, bal, meisaiOpts), `請求明細書_${safeName}_${docNo}.pdf`);
         storagePath = `pdfs/meisai/${docNo}.pdf`;
       }
       if (result) {
@@ -561,40 +674,62 @@ function PrintModeModal({ invoice, delivery, clients, company, balances, divisio
 function BalanceModal({ client, balance, onClose }) {
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(today());
+  const [fee, setFee] = useState("");
+  const [feeBearer, setFeeBearer] = useState("none"); // none=手数料なし / self=当社負担（差引入金の消し込み）
   const save = async () => {
     const n = Number(amount);
     if (!n || n <= 0) return alert("金額を入力してください");
+    const feeN = feeBearer === "self" ? (Number(fee) || 0) : 0;
+    // 当社負担の振込手数料は「差し引かれて振り込まれた分」も含めて消し込む
+    const clearAmount = n + feeN;
     const prev = balance?.currentBalance || 0;
-    const newBalance = prev - n;
+    const newBalance = prev - clearAmount;
     await setDoc(doc(db, "clientBalances", client.id), {
       clientId: client.id, prevBalance: prev,
       currentBalance: newBalance,
-      paidAmount: (balance?.paidAmount || 0) + n,
+      paidAmount: (balance?.paidAmount || 0) + clearAmount,
       lastPaidDate: date, lastPaidAmount: n,
       updatedAt: serverTimestamp(),
     });
     // 入金履歴を保存
     await addDoc(collection(db, "paymentHistory"), {
       clientId: client.id, clientName: client.name || "",
-      amount: n, date, prevBalance: prev, newBalance,
+      amount: n, fee: feeN, feeBearer: feeN > 0 ? "self" : "none",
+      date, prevBalance: prev, newBalance,
       createdAt: serverTimestamp(),
     });
     onClose();
   };
   return (
     <div style={s.modal} onClick={onClose}>
-      <div style={{ ...s.modalBox, maxWidth: 380 }} onClick={e => e.stopPropagation()}>
-        <h3 style={{ margin: "0 0 20px", color: C.navy }}>入金を記録　— {client?.name}</h3>
+      <div style={{ ...s.modalBox, maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+        <h3 style={{ margin: "0 0 20px", color: C.navy }}>入金処理　— {client?.name}</h3>
         <div style={{ background: C.pale, padding: 14, borderRadius: 8, marginBottom: 18, fontSize: 14 }}>
           現在の残高：<strong style={{ color: C.red }}>¥{fmt(balance?.currentBalance || 0)}</strong>
         </div>
-        <div style={{ ...s.row, marginBottom: 16 }}>
+        <div style={{ ...s.row, marginBottom: 12 }}>
           <div style={s.col}><span style={s.label}>入金日</span><input style={s.input} type="date" value={date} onChange={e => setDate(e.target.value)} /></div>
-          <div style={s.col}><span style={s.label}>入金額</span><input style={{ ...s.input, minWidth: 160 }} type="number" value={amount} onChange={e => setAmount(e.target.value)} /></div>
+          <div style={s.col}><span style={s.label}>入金額（実際に振り込まれた額）</span><input style={{ ...s.input, minWidth: 160 }} type="number" {...noWheel} value={amount} onChange={e => setAmount(e.target.value)} /></div>
         </div>
+        <div style={{ ...s.row, marginBottom: 8, alignItems: "flex-end" }}>
+          <div style={s.col}><span style={s.label}>振込手数料</span>
+            <select style={s.select} value={feeBearer} onChange={e => setFeeBearer(e.target.value)}>
+              <option value="none">差引なし（手数料は先方負担）</option>
+              <option value="self">差し引かれて入金（手数料は当社負担）</option>
+            </select>
+          </div>
+          {feeBearer === "self" && (
+            <div style={s.col}><span style={s.label}>手数料額</span><input style={{ ...s.input, width: 120 }} type="number" {...noWheel} value={fee} onChange={e => setFee(e.target.value)} placeholder="例: 660" /></div>
+          )}
+        </div>
+        {feeBearer === "self" && (Number(fee) || 0) > 0 && (Number(amount) || 0) > 0 && (
+          <div style={{ fontSize: 12, color: C.gray, marginBottom: 12 }}>
+            消し込み額：¥{fmt((Number(amount) || 0) + (Number(fee) || 0))}（入金 ¥{fmt(Number(amount) || 0)} ＋ 手数料 ¥{fmt(Number(fee) || 0)}）
+          </div>
+        )}
         <div style={{ ...s.row, justifyContent: "flex-end", gap: 8 }}>
           <button style={s.btn("light")} onClick={onClose}>キャンセル</button>
-          <button style={s.btn("green")} onClick={save}>保存</button>
+          <button style={s.btn("green")} onClick={save}>入金処理を確定</button>
         </div>
       </div>
     </div>
@@ -606,7 +741,7 @@ function ProductPicker({ products, onSelect, onClose }) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
   const pickerCats = [...new Set(products.map(p => p.category).filter(Boolean))].sort((a,b) => a.localeCompare(b,"ja"));
-  const filtered = products.filter(p => (!cat || p.category === cat) && ((p.name||"").includes(q) || String(p.code||"").includes(q))).sort((a, b) => String(a.code||"").localeCompare(String(b.code||""), "ja", {numeric:true}));
+  const filtered = products.filter(p => (!cat || p.category === cat) && matchSearch(q, p.name, p.code)).sort((a, b) => String(a.code||"").localeCompare(String(b.code||""), "ja", {numeric:true}));
   return (
     <div style={s.modal} onClick={onClose}>
       <div style={{ ...s.modalBox, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
@@ -640,14 +775,13 @@ function ProductPicker({ products, onSelect, onClose }) {
 }
 
 // ── Item Row ──────────────────────────────────────────────────────────────────
-function ItemRow({ item, idx, onChange, onRemove, onPickProduct, products, clientPrices, clientId }) {
+function ItemRow({ item, idx, onChange, onRemove, onInsert, onPickProduct, products, clientPrices, client }) {
   const rate = item.taxRate !== undefined && item.taxRate !== null && item.taxRate !== "" ? Number(item.taxRate) : 10;
   const [suggest, setSuggest] = useState(false);
   const q = item.name || "";
-  const suggestions = q.length >= 1 && suggest !== false ? (products || []).filter(p => (p.name||"").includes(q) || String(p.code||"").includes(q)).sort((a, b) => String(a.code||"").localeCompare(String(b.code||""), "ja", {numeric:true})).slice(0, 8) : [];
+  const suggestions = q.length >= 1 && suggest !== false ? (products || []).filter(p => matchSearch(q, p.name, p.code)).sort((a, b) => String(a.code||"").localeCompare(String(b.code||""), "ja", {numeric:true})).slice(0, 8) : [];
   const pickSuggest = (p) => {
-    const cp = clientPrices?.find(cp => cp.clientId === clientId && cp.productId === p.id);
-    const price = cp ? cp.price : (p.price || 0);
+    const price = resolvePrice(p, client, clientPrices);
     onChange(idx, "name", p.name); onChange(idx, "unit", p.unit || ""); onChange(idx, "price", price); onChange(idx, "taxRate", p.taxRate !== undefined ? p.taxRate : 10);
     setSuggest(false);
   };
@@ -670,12 +804,15 @@ function ItemRow({ item, idx, onChange, onRemove, onPickProduct, products, clien
           </div>
         )}
       </td>
-      <td style={s.td}><input style={{ ...s.input, width: 70 }} type="number" value={item.qty} onChange={e => onChange(idx, "qty", e.target.value)} /></td>
+      <td style={s.td}><input style={{ ...s.input, width: 70 }} type="number" {...noWheel} value={item.qty} onChange={e => onChange(idx, "qty", e.target.value)} /></td>
       <td style={s.td}><input style={{ ...s.input, width: 60 }} value={item.unit} onChange={e => onChange(idx, "unit", e.target.value)} placeholder="袋" /></td>
-      <td style={s.td}><input style={{ ...s.input, width: 100 }} type="number" value={item.price} onChange={e => onChange(idx, "price", e.target.value)} /></td>
+      <td style={s.td}><input style={{ ...s.input, width: 100 }} type="number" {...noWheel} value={item.price} onChange={e => onChange(idx, "price", e.target.value)} /></td>
       <td style={{ ...s.td, textAlign: "center", fontSize: 12, color: C.gray }}>{rate}%</td>
       <td style={{ ...s.td, textAlign: "right" }}>¥{fmt(Number(item.qty||0)*Number(item.price||0))}</td>
-      <td style={s.td}><button style={{ ...s.btn("red"), padding: "4px 10px" }} onClick={() => onRemove(idx)}>✕</button></td>
+      <td style={{ ...s.td, whiteSpace: "nowrap" }}>
+        {onInsert && <button title="この行の下に行を差し込む" style={{ ...s.btn("light"), padding: "4px 8px", marginRight: 4 }} onClick={() => onInsert(idx)}>＋</button>}
+        <button style={{ ...s.btn("red"), padding: "4px 10px" }} onClick={() => onRemove(idx)}>✕</button>
+      </td>
     </tr>
   );
 }
@@ -686,11 +823,12 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
   const [form, setForm] = useState(editing || { clientId: "", divisionId: "", date: today(), notes: "", items: [{ name: "", qty: 1, unit: "", price: 0, taxRate: defRate }] });
   const [pickerIdx, setPickerIdx] = useState(null);
   const [clientSearch, setClientSearch] = useState("");
-  const filteredClients = clientSearch ? clients.filter(c => c.name?.includes(clientSearch) || c.code?.includes(clientSearch)) : clients;
+  const filteredClients = clientSearch ? clients.filter(c => matchSearch(clientSearch, c.name, c.kana, c.code)) : clients;
   const setF = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const setItem = (idx, k, v) => setForm(f => ({ ...f, items: f.items.map((it, i) => i === idx ? { ...it, [k]: v } : it) }));
   const addItem = () => setForm(f => ({ ...f, items: [...f.items, { name: "", qty: 1, unit: "", price: 0, taxRate: defRate }] }));
   const remItem = (idx) => setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
+  const insertItem = (idx) => setForm(f => ({ ...f, items: [...f.items.slice(0, idx + 1), { name: "", qty: 1, unit: "", price: 0, taxRate: defRate }, ...f.items.slice(idx + 1)] }));
   const { sub, tax, total: grandTotal } = totalFromItems(form.items);
   const taxGroups = calcTaxByRate(form.items);
   const save = async () => {
@@ -746,8 +884,9 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
       if (autoInv) {
         const inv = {
           docNo: genDocNo("INV", invoices), clientId: form.clientId, date: form.date,
-          dueDate: nextMonthEnd(form.date), billingType: "immediate",
+          dueDate: dueDateFor(cl, form.date), billingType: "immediate",
           items: form.items, subtotal: sub, tax, total: grandTotal,
+          notes: form.notes || "",
           deliveryRef: data.docNo, deliveryRefs: [data.docNo],
           status: "unpaid", createdAt: serverTimestamp(),
         };
@@ -832,7 +971,7 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
         </div>
         <table style={s.table}>
           <thead><tr><th style={s.th}>品名</th><th style={s.th}>数量</th><th style={s.th}>単位</th><th style={s.th}>単価</th><th style={s.th}>税率</th><th style={s.th}>金額</th><th style={s.th}></th></tr></thead>
-          <tbody>{form.items.map((it, idx) => <ItemRow key={idx} item={it} idx={idx} onChange={setItem} onRemove={remItem} onPickProduct={setPickerIdx} products={products} clientPrices={clientPrices} clientId={form.clientId} />)}</tbody>
+          <tbody>{form.items.map((it, idx) => <ItemRow key={idx} item={it} idx={idx} onChange={setItem} onRemove={remItem} onInsert={insertItem} onPickProduct={setPickerIdx} products={products} clientPrices={clientPrices} client={clients.find(c => c.id === form.clientId)} />)}</tbody>
         </table>
         <button style={{ ...s.btn("light"), marginBottom: 16 }} onClick={addItem}>＋ 行を追加</button>
         <div style={{ textAlign: "right", marginBottom: 16 }}>
@@ -840,7 +979,7 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
           <div style={{ fontSize: 13, color: C.gray, marginTop: 4 }}>小計 ¥{fmt(sub)}　消費税 ¥{fmt(tax)}</div>
           <div style={{ fontSize: 18, fontWeight: 700, color: C.navy }}>合計 ¥{fmt(grandTotal)}</div>
         </div>
-        <div style={s.col}><span style={s.label}>備考</span><textarea style={{ ...s.input, minHeight: 60 }} value={form.notes} onChange={e => setF("notes", e.target.value)} /></div>
+        <div style={s.col}><span style={s.label}>備考（請求書・請求明細書にも記載されます）</span><textarea style={{ ...s.input, minHeight: 60 }} value={form.notes} onChange={e => setF("notes", e.target.value)} /></div>
         <div style={{ ...s.row, justifyContent: "flex-end", marginTop: 20 }}>
           <button style={s.btn("light")} onClick={onClose}>キャンセル</button>
           <button style={s.btn("primary")} onClick={save}>{editing ? "更新" : "保存"}</button>
@@ -848,8 +987,7 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
       </div>
       {pickerIdx !== null && <ProductPicker products={products} onClose={() => setPickerIdx(null)}
         onSelect={p => {
-          const cp = clientPrices?.find(cp => cp.clientId === form.clientId && cp.productId === p.id);
-          const price = cp ? cp.price : (p.price || 0);
+          const price = resolvePrice(p, clients.find(c => c.id === form.clientId), clientPrices);
           setItem(pickerIdx,"name",p.name); setItem(pickerIdx,"unit",p.unit||""); setItem(pickerIdx,"price",price); setItem(pickerIdx,"taxRate",p.taxRate!==undefined?p.taxRate:10); setPickerIdx(null);
         }} />}
     </div>
@@ -866,6 +1004,7 @@ function QuotationForm({ clients, products, quotations, clientPrices, divisions,
   const setItem = (idx, k, v) => setForm(f => ({ ...f, items: f.items.map((it, i) => i === idx ? { ...it, [k]: v } : it) }));
   const addItem = () => setForm(f => ({ ...f, items: [...f.items, { name: "", qty: 1, unit: "", price: 0, taxRate: defRate }] }));
   const remItem = (idx) => setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
+  const insertItem = (idx) => setForm(f => ({ ...f, items: [...f.items.slice(0, idx + 1), { name: "", qty: 1, unit: "", price: 0, taxRate: defRate }, ...f.items.slice(idx + 1)] }));
   const { sub, tax, total: grandTotal } = totalFromItems(form.items);
   const taxGroups = calcTaxByRate(form.items);
   const save = async () => {
@@ -906,7 +1045,7 @@ function QuotationForm({ clients, products, quotations, clientPrices, divisions,
         </div>
         <table style={s.table}>
           <thead><tr><th style={s.th}>品名</th><th style={s.th}>数量</th><th style={s.th}>単位</th><th style={s.th}>単価</th><th style={s.th}>税率</th><th style={s.th}>金額</th><th style={s.th}></th></tr></thead>
-          <tbody>{form.items.map((it, idx) => <ItemRow key={idx} item={it} idx={idx} onChange={setItem} onRemove={remItem} onPickProduct={setPickerIdx} products={products} clientPrices={clientPrices} clientId={form.clientId} />)}</tbody>
+          <tbody>{form.items.map((it, idx) => <ItemRow key={idx} item={it} idx={idx} onChange={setItem} onRemove={remItem} onInsert={insertItem} onPickProduct={setPickerIdx} products={products} clientPrices={clientPrices} client={clients.find(c => c.id === form.clientId)} />)}</tbody>
         </table>
         <button style={{ ...s.btn("light"), marginBottom: 16 }} onClick={addItem}>＋ 行を追加</button>
         <div style={{ textAlign: "right", marginBottom: 16 }}>
@@ -922,8 +1061,7 @@ function QuotationForm({ clients, products, quotations, clientPrices, divisions,
       </div>
       {pickerIdx !== null && <ProductPicker products={products} onClose={() => setPickerIdx(null)}
         onSelect={p => {
-          const cp = clientPrices?.find(cp => cp.clientId === form.clientId && cp.productId === p.id);
-          const price = cp ? cp.price : (p.price || 0);
+          const price = resolvePrice(p, clients.find(c => c.id === form.clientId), clientPrices);
           setItem(pickerIdx,"name",p.name); setItem(pickerIdx,"unit",p.unit||""); setItem(pickerIdx,"price",price); setItem(pickerIdx,"taxRate",p.taxRate!==undefined?p.taxRate:10); setPickerIdx(null);
         }} />}
     </div>
@@ -938,7 +1076,7 @@ function QuotationsList({ clients, quotations, products, deliveries, company, cl
   const [printTarget, setPrintTarget] = useState(null);
   const filtered = quotations.filter(q => {
     const cn = clients.find(c => c.id === q.clientId)?.name || "";
-    return cn.includes(search) || (q.docNo || "").includes(search);
+    return matchSearch(search, cn, q.docNo);
   });
   const deleteQ = async (id) => { if (confirm("削除しますか？")) await deleteDoc(doc(db, "quotations", id)); };
   const toDelivery = async (q) => {
@@ -1024,6 +1162,12 @@ function QuotationsList({ clients, quotations, products, deliveries, company, cl
 // ── Home (やることリスト) ─────────────────────────────────────────────────────
 function HomePage({ clients, deliveries, invoices, balances, pendings, setPage, company }) {
   const overdueInv = invoices.filter(i => i.status === "unpaid" && i.dueDate && i.dueDate < today());
+  // 今月の納品集計（見込み売上）：当月の納品書を毎日集計して表示
+  const thisMonth = today().slice(0, 7);
+  const monthDels = deliveries.filter(d => (d.date || "").slice(0, 7) === thisMonth);
+  const monthDelTotal = monthDels.reduce((a, d) => a + (d.total || 0), 0);
+  const monthUnissued = monthDels.filter(d => d.status === "unissued");
+  const monthUnissuedTotal = monthUnissued.reduce((a, d) => a + (d.total || 0), 0);
   const pendingApprovals = company?.approvalEnabled ? pendings.filter(p => p.status === "pending") : [];
   const unsentInv = invoices.filter(i => i.status === "unpaid" && (!i.sentStatus || i.sentStatus === "scheduled"));
   const unissuedDel = deliveries.filter(d => d.status === "unissued");
@@ -1076,6 +1220,17 @@ function HomePage({ clients, deliveries, invoices, balances, pendings, setPage, 
   return (
     <div>
       <div style={s.pageTitle}>ホーム</div>
+      {company?.deliveryEnabled !== false && (
+        <div style={{ ...s.card, display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap", borderLeft: `4px solid ${C.gold}` }}>
+          <div>
+            <div style={{ fontSize: 12, color: C.gray }}>今月の納品集計（見込み売上）　{Number(thisMonth.split("-")[1])}月分</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: C.navy }}>¥{fmt(monthDelTotal)}</div>
+          </div>
+          <div style={{ fontSize: 13, color: C.gray }}>納品書 {monthDels.length}件</div>
+          {monthUnissued.length > 0 && <div style={{ fontSize: 13, color: C.gold }}>うち未請求 {monthUnissued.length}件 ¥{fmt(monthUnissuedTotal)}</div>}
+          <button style={{ ...s.btn("light"), marginLeft: "auto", padding: "5px 12px", fontSize: 12 }} onClick={() => setPage("deliveries")}>納品書一覧 →</button>
+        </div>
+      )}
       {activeSections.length === 0 ? (
         <div style={{ ...s.card, textAlign: "center", padding: "40px 20px", color: C.green }}>
           <div style={{ fontSize: 36, marginBottom: 12 }}>✓</div>
@@ -1195,7 +1350,7 @@ function Dashboard({ clients, deliveries, invoices, balances }) {
 }
 
 // ── Deliveries ────────────────────────────────────────────────────────────────
-function DeliveriesList({ clients, deliveries, products, invoices, company, balances, clientPrices, divisions, isAdmin }) {
+function DeliveriesList({ clients, deliveries, products, invoices, company, balances, clientPrices, divisions, isAdmin, paymentHistory = [] }) {
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -1206,7 +1361,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
   const [sortOrder, setSortOrder] = useState("desc"); // desc=新しい順, asc=古い順
   const filtered = deliveries.filter(d => {
     const cn = clients.find(c => c.id === d.clientId)?.name || "";
-    if (!(cn.includes(search) || (d.docNo || "").includes(search))) return false;
+    if (!matchSearch(search, cn, d.docNo)) return false;
     if (dateFrom && d.date < dateFrom) return false;
     if (dateTo && d.date > dateTo) return false;
     return true;
@@ -1269,11 +1424,13 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
     const balUpdates = {};
     for (let i = 0; i < unissued.length; i++) {
       const d = unissued[i];
+      const dCl = clients.find(c => c.id === d.clientId);
       const inv = {
         docNo: `INV-${ym}-${String(existingCount + i + 1).padStart(3, "0")}`,
         clientId: d.clientId, date: d.date,
-        dueDate: nextMonthEnd(d.date), billingType: "immediate",
+        dueDate: dueDateFor(dCl, d.date), billingType: "immediate",
         deliveryRef: d.docNo, deliveryRefs: [d.docNo],
+        notes: d.notes || "",
         items: d.items, subtotal: d.subtotal, tax: d.tax, total: d.total,
         status: "unpaid", createdAt: serverTimestamp(),
       };
@@ -1303,7 +1460,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
         type: "invoice", clientId: d.clientId, clientName: cl?.name || "",
         divisionId: cl?.divisionId || "", deliveryId: d.id, deliveryDocNo: d.docNo,
         items: d.items, subtotal: d.subtotal, tax: d.tax, total: d.total,
-        billingType: "immediate",
+        billingType: "immediate", notes: d.notes || "",
         status: "pending", createdAt: serverTimestamp(),
       });
       await updateDoc(doc(db, "deliveries", d.id), { status: "pending_approval" });
@@ -1312,8 +1469,9 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
     }
     const inv = {
       docNo: genDocNo("INV", invoices), clientId: d.clientId, date: d.date,
-      dueDate: nextMonthEnd(d.date), billingType: "immediate",
+      dueDate: dueDateFor(cl, d.date), billingType: "immediate",
       deliveryRef: d.docNo, deliveryRefs: [d.docNo],
+      notes: d.notes || "",
       items: d.items, subtotal: d.subtotal, tax: d.tax, total: d.total,
       status: "unpaid", createdAt: serverTimestamp(),
     };
@@ -1431,14 +1589,15 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
       {showForm && <DeliveryForm clients={clients} products={products} deliveries={deliveries} clientPrices={clientPrices} divisions={divisions} company={company} invoices={invoices} balances={balances} editing={editing}
         onSave={() => setShowForm(false)} onClose={() => setShowForm(false)} />}
       {printTarget && <PrintModeModal invoice={printTarget.invoice} delivery={printTarget.delivery}
-        clients={clients} company={company} balances={balances} divisions={divisions} onClose={() => setPrintTarget(null)} />}
+        clients={clients} company={company} balances={balances} divisions={divisions} invoices={invoices} paymentHistory={paymentHistory} deliveries={deliveries} onClose={() => setPrintTarget(null)} />}
     </div>
   );
 }
 
 // ── Send Record Modal ─────────────────────────────────────────────────────────
-function SendRecordModal({ invoice, clients, company, divisions, balances, onClose }) {
+function SendRecordModal({ invoice, clients, company, divisions, balances, invoices = [], paymentHistory = [], onClose }) {
   const cl = clients.find(c => c.id === invoice?.clientId) || {};
+  const summaryOpts = invoice ? { summary: calcMeisaiSummary(invoice, invoices, paymentHistory, balances) } : {};
   const [method, setMethod] = useState("mail");
   const [memo, setMemo] = useState("");
   const [email, setEmail] = useState(getEmailStr(cl) || "");
@@ -1456,7 +1615,7 @@ function SendRecordModal({ invoice, clients, company, divisions, balances, onClo
     setResult(null);
     try {
       // PDF生成
-      const invoiceHTML = buildInvoiceHTML(invoice, clients, co, bal);
+      const invoiceHTML = buildInvoiceHTML(invoice, clients, co, bal, summaryOpts);
       const safeName = (cl.name||"").replace(/[\\/:*?"<>|]/g,"_");
       const { blob, filename } = await generatePDF(invoiceHTML, `請求書_${safeName}_${invoice.docNo}.pdf`);
 
@@ -1587,8 +1746,9 @@ function SendRecordModal({ invoice, clients, company, divisions, balances, onClo
 }
 
 // ── Resend Modal ──────────────────────────────────────────────────────────────
-function ResendModal({ invoice, clients, company, divisions, balances, onClose }) {
+function ResendModal({ invoice, clients, company, divisions, balances, invoices = [], paymentHistory = [], onClose }) {
   const cl = clients.find(c => c.id === invoice?.clientId) || {};
+  const summaryOpts = invoice ? { summary: calcMeisaiSummary(invoice, invoices, paymentHistory, balances) } : {};
   const [message, setMessage] = useState("先日お送りいたしました請求書につきまして、改めてお送りいたします。\nご査収のほど、よろしくお願いいたします。");
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
@@ -1614,7 +1774,7 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
       if (!pdfUrl) {
         try {
           const rBal = balances?.[invoice.clientId];
-          const invoiceHTML = buildInvoiceHTML(invoice, [cl], co, rBal);
+          const invoiceHTML = buildInvoiceHTML(invoice, [cl], co, rBal, summaryOpts);
           const safeName = (cl.name||"").replace(/[\\/:*?"<>|]/g,"_");
           const { blob, filename } = await generatePDF(invoiceHTML, `請求書_${safeName}_${invoice.docNo}.pdf`);
           const storagePath = `pdfs/invoices/${invoice.docNo}.pdf`;
@@ -1732,7 +1892,7 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
 }
 
 // ── Invoices ──────────────────────────────────────────────────────────────────
-function InvoicesList({ clients, invoices, deliveries, company, balances, divisions, isAdmin, setPage, setBalanceOpenClientId }) {
+function InvoicesList({ clients, invoices, deliveries, company, balances, divisions, isAdmin, setPage, setBalanceOpenClientId, paymentHistory = [] }) {
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -1749,7 +1909,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
   const [expandedInv, setExpandedInv] = useState(null);
   const filtered = invoices.filter(i => {
     const cn = clients.find(c => c.id === i.clientId)?.name || "";
-    if (!(cn.includes(search) || (i.docNo || "").includes(search))) return false;
+    if (!matchSearch(search, cn, i.docNo)) return false;
     if (dateFrom && i.date < dateFrom) return false;
     if (dateTo && i.date > dateTo) return false;
     return true;
@@ -1765,6 +1925,26 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
       const invIds = d.invoiceIds || (d.invoiceId ? [d.invoiceId] : []);
       if (invIds.includes(id)) await deleteDoc(pbDoc.ref);
     }
+  };
+  // 締め請求の取り消し：請求書を削除し、対象の納品書を未請求に戻し、残高も戻す
+  const cancelClosing = async (inv) => {
+    if (inv.status === "paid") return alert("入金済の請求書は取り消せません。先に入金を取り消してください。");
+    const relDels = deliveries.filter(d => d.invoiceId === inv.id || (inv.deliveryRefs || []).includes(d.docNo));
+    const warnSent = inv.sentStatus === "sent" ? "\n\n⚠ この請求書は送信済みです。取引先への連絡もご検討ください。" : "";
+    if (!confirm(`${inv.docNo}（¥${fmt(inv.total)}）の締め請求を取り消しますか？\n\n・請求書を削除\n・納品書 ${relDels.length}件を「未請求」に戻す\n・売掛残高から ¥${fmt((inv.total || 0) - (inv.withholding ? (inv.withholdingAmount || 0) : 0))} を差し引く${warnSent}`)) return;
+    const batch = writeBatch(db);
+    relDels.forEach(d => batch.update(doc(db, "deliveries", d.id), { status: "unissued", invoiceId: null }));
+    batch.delete(doc(db, "invoices", inv.id));
+    await batch.commit();
+    // 残高を戻す（発行時に加算した「差引請求額」を減算）
+    const wa = inv.withholding ? (inv.withholdingAmount || 0) : 0;
+    const bal = balances[inv.clientId] || {};
+    await setDoc(doc(db, "clientBalances", inv.clientId), {
+      clientId: inv.clientId, prevBalance: bal.currentBalance || 0,
+      currentBalance: (bal.currentBalance || 0) - ((inv.total || 0) - wa),
+      paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
+    });
+    alert(`${inv.docNo} を取り消しました。納品書 ${relDels.length}件が未請求に戻り、月締め管理から再発行できます。`);
   };
   return (
     <div>
@@ -1802,7 +1982,10 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
               return (
                 <React.Fragment key={inv.id}>
                 <tr style={isClosing ? { cursor: "pointer", background: isExpanded ? "#f8f9ff" : "transparent" } : undefined} onClick={isClosing ? () => setExpandedInv(isExpanded ? null : inv.id) : undefined}>
-                  <td style={s.td}>{isClosing && <span style={{ fontSize: 10, marginRight: 4 }}>{isExpanded ? "▼" : "▶"}</span>}{inv.docNo}</td><td style={s.td}>{inv.date}</td>
+                  <td style={s.td}>{isClosing && <span style={{ fontSize: 10, marginRight: 4 }}>{isExpanded ? "▼" : "▶"}</span>}{inv.docNo}</td>
+                  <td style={s.td}>{(inv.billingType === "closing" || inv.billingType === "monthly") && inv.closingPeriod?.end
+                    ? <>{inv.closingPeriod.end}<span style={{ fontSize: 10, color: C.gray, display: "block" }}>締め日（発行 {inv.date}）</span></>
+                    : inv.date}</td>
                   <td style={s.td}>{client?.name || "—"}{isClosing && <span style={{ fontSize: 11, color: C.gray, marginLeft: 4 }}>（{inv.deliveryRefs.length}件）</span>}</td>
                   <td style={s.td}>¥{fmt(inv.total)}</td>
                   <td style={{ ...s.td, fontWeight: 700, color: (bal.currentBalance||0) > 0 ? C.red : C.green }}>¥{fmt(bal.currentBalance||0)}</td>
@@ -1845,7 +2028,10 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
                         </span>
                       )}
                       {inv.status !== "paid" && (
-                        <button style={{ ...s.btn("gold"), padding: "4px 8px", fontSize: 12 }} onClick={() => { setBalanceOpenClientId(client.id); setPage("balance"); }}>入金記録</button>
+                        <button style={{ ...s.btn("gold"), padding: "4px 8px", fontSize: 12 }} onClick={() => { setBalanceOpenClientId(client.id); setPage("balance"); }}>入金処理</button>
+                      )}
+                      {isClosing && inv.status !== "paid" && (
+                        <button style={{ ...s.btn("light"), padding: "4px 8px", fontSize: 12, color: C.red }} onClick={() => cancelClosing(inv)}>締め取消</button>
                       )}
                       {isAdmin && <button style={{ ...s.btn("red"), padding: "4px 8px", fontSize: 12 }} onClick={() => del(inv.id)}>削除</button>}
                     </div>
@@ -1921,9 +2107,9 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
         );
       })()}
       {printTarget && <PrintModeModal invoice={printTarget.invoice} delivery={printTarget.delivery}
-        clients={clients} company={company} balances={balances} divisions={divisions} onClose={() => setPrintTarget(null)} />}
-      {sendTarget && <SendRecordModal invoice={sendTarget} clients={clients} company={company} divisions={divisions} balances={balances} onClose={() => setSendTarget(null)} />}
-      {resendTarget && <ResendModal invoice={resendTarget} clients={clients} company={company} divisions={divisions} balances={balances} onClose={() => setResendTarget(null)} />}
+        clients={clients} company={company} balances={balances} divisions={divisions} invoices={invoices} paymentHistory={paymentHistory} deliveries={deliveries} onClose={() => setPrintTarget(null)} />}
+      {sendTarget && <SendRecordModal invoice={sendTarget} clients={clients} company={company} divisions={divisions} balances={balances} invoices={invoices} paymentHistory={paymentHistory} onClose={() => setSendTarget(null)} />}
+      {resendTarget && <ResendModal invoice={resendTarget} clients={clients} company={company} divisions={divisions} balances={balances} invoices={invoices} paymentHistory={paymentHistory} onClose={() => setResendTarget(null)} />}
       {reRequestTarget && (() => {
         const inv = reRequestTarget;
         const cl = clients.find(c => c.id === inv.clientId) || {};
@@ -2066,7 +2252,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
 }
 
 // ── Monthly Billing ───────────────────────────────────────────────────────────
-function MonthlyBilling({ clients, deliveries, invoices, company, balances, divisions }) {
+function MonthlyBilling({ clients, deliveries, invoices, company, balances, divisions, paymentHistory = [] }) {
   const [month, setMonth] = useState(today().slice(0, 7));
   const [printTarget, setPrintTarget] = useState(null);
   const [openClients, setOpenClients] = useState({});
@@ -2081,6 +2267,7 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
     if (!dels.length) return alert("対象の未請求納品書がありません");
     const allItems = dels.flatMap(d => d.items || []);
     const { sub, tax, total: grandTotal } = totalFromItems(allItems);
+    const joinedNotes = dels.map(d => d.notes).filter(Boolean).join("　／　");
     if (company?.approvalEnabled && company?.invoiceApproval) {
       await addDoc(collection(db, "pendingBillings"), {
         type: "invoice", clientId: client.id, clientName: client.name || "",
@@ -2090,6 +2277,7 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
         billingType: "closing", closingDay: period.closingDay,
         closingPeriod: { start: period.start, end: period.end },
         deliveryRefItems: JSON.stringify(dels.map(d => d.items || [])),
+        notes: joinedNotes,
         status: "pending", createdAt: serverTimestamp(),
       });
       const batch2 = writeBatch(db);
@@ -2100,11 +2288,12 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
     }
     const inv = {
       docNo: genDocNo("INV", invoices), clientId: client.id, date: today(),
-      dueDate: nextMonthEnd(period.end), billingType: "closing",
+      dueDate: dueDateFor(client, period.end), billingType: "closing",
       closingDay: period.closingDay, closingPeriod: { start: period.start, end: period.end },
       deliveryRefs: dels.map(d => d.docNo),
       deliveryRefItems: JSON.stringify(dels.map(d => d.items || [])),
       items: allItems, subtotal: sub, tax, total: grandTotal,
+      notes: joinedNotes,
       status: "unpaid", createdAt: serverTimestamp(),
     };
     const batch = writeBatch(db);
@@ -2119,6 +2308,26 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
       paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
     });
     alert(`請求書を発行しました（${dels.length}件まとめ、${period.label}）`);
+  };
+
+  // 締め請求の取り消し（請求書一覧のcancelClosingと同じ処理）
+  const cancelClosing = async (inv) => {
+    if (inv.status === "paid") return alert("入金済の請求書は取り消せません。先に入金を取り消してください。");
+    const relDels = deliveries.filter(d => d.invoiceId === inv.id || (inv.deliveryRefs || []).includes(d.docNo));
+    const warnSent = inv.sentStatus === "sent" ? "\n\n⚠ この請求書は送信済みです。取引先への連絡もご検討ください。" : "";
+    if (!confirm(`${inv.docNo}（¥${fmt(inv.total)}）の締め請求を取り消しますか？\n\n・請求書を削除\n・納品書 ${relDels.length}件を「未請求」に戻す\n・売掛残高から ¥${fmt((inv.total || 0) - (inv.withholding ? (inv.withholdingAmount || 0) : 0))} を差し引く${warnSent}`)) return;
+    const batch = writeBatch(db);
+    relDels.forEach(d => batch.update(doc(db, "deliveries", d.id), { status: "unissued", invoiceId: null }));
+    batch.delete(doc(db, "invoices", inv.id));
+    await batch.commit();
+    const wa = inv.withholding ? (inv.withholdingAmount || 0) : 0;
+    const bal = balances[inv.clientId] || {};
+    await setDoc(doc(db, "clientBalances", inv.clientId), {
+      clientId: inv.clientId, prevBalance: bal.currentBalance || 0,
+      currentBalance: (bal.currentBalance || 0) - ((inv.total || 0) - wa),
+      paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
+    });
+    alert(`${inv.docNo} を取り消しました。納品書が未請求に戻ったので、修正後に再発行できます。`);
   };
 
   return (
@@ -2168,7 +2377,10 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                       <span style={{ fontSize: 13, color: C.gray }}>未請求：{unissued.length}件　¥{fmt(unissuedTotal)}</span>
                       {existInv
-                        ? <button style={{ ...s.btn("light"), padding: "6px 12px", fontSize: 12 }} onClick={() => setPrintTarget({ invoice: existInv })}>🖨 発行済み請求書</button>
+                        ? <>
+                            <button style={{ ...s.btn("light"), padding: "6px 12px", fontSize: 12 }} onClick={() => setPrintTarget({ invoice: existInv })}>🖨 発行済み請求書</button>
+                            {existInv.status !== "paid" && <button style={{ ...s.btn("light"), padding: "6px 12px", fontSize: 12, color: C.red }} onClick={() => cancelClosing(existInv)}>締め取消</button>}
+                          </>
                         : <button style={{ ...s.btn("gold"), padding: "6px 12px", fontSize: 12 }} onClick={() => issueClosing(client, period)} disabled={!unissued.length}>請求書発行</button>
                       }
                     </div>
@@ -2230,7 +2442,7 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
         );
       })()}
       {printTarget && <PrintModeModal invoice={printTarget.invoice} delivery={null}
-        clients={clients} company={company} balances={balances} divisions={divisions} onClose={() => setPrintTarget(null)} />}
+        clients={clients} company={company} balances={balances} divisions={divisions} invoices={invoices} paymentHistory={paymentHistory} deliveries={deliveries} onClose={() => setPrintTarget(null)} />}
     </div>
   );
 }
@@ -3252,6 +3464,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory, ini
   const [openingAmount, setOpeningAmount] = useState("");
   const [openingDate, setOpeningDate] = useState(today().slice(0, 7) + "-01");
   const [openBalClients, setOpenBalClients] = useState(() => initialOpenClientId ? { [initialOpenClientId]: true } : {});
+  const [search, setSearch] = useState("");
   const total = Object.values(balances).reduce((a, b) => a + (b.currentBalance || 0), 0);
 
   useEffect(() => {
@@ -3266,18 +3479,30 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory, ini
   }, [initialOpenClientId]);
 
   const cancelPayment = async (ph) => {
+    const clearAmount = (ph.amount || 0) + (ph.fee || 0);
     if (!confirm(`${ph.clientName} の入金 ¥${fmt(ph.amount)}（${ph.date}）を取り消しますか？\n\n残高が元に戻ります。`)) return;
-    // 残高を戻す
+    // 残高を戻す（当社負担の振込手数料込みで消し込んだ分を戻す）
     const bal = balances[ph.clientId] || {};
     const prev = bal.currentBalance || 0;
     await setDoc(doc(db, "clientBalances", ph.clientId), {
       clientId: ph.clientId, prevBalance: prev,
-      currentBalance: prev + ph.amount,
-      paidAmount: Math.max(0, (bal.paidAmount || 0) - ph.amount),
+      currentBalance: prev + clearAmount,
+      paidAmount: Math.max(0, (bal.paidAmount || 0) - clearAmount),
       updatedAt: serverTimestamp(),
     });
     // 入金履歴を削除
     await deleteDoc(doc(db, "paymentHistory", ph.id));
+  };
+
+  // 請求書単位の入金済/未収の切り替え（残高管理から直接操作）
+  const markInvoicePaid = async (invId, docNo, toPaid) => {
+    if (toPaid) {
+      if (!confirm(`${docNo} を入金済にしますか？`)) return;
+      await updateDoc(doc(db, "invoices", invId), { status: "paid", paidAt: today() });
+    } else {
+      if (!confirm(`${docNo} を未収に戻しますか？`)) return;
+      await updateDoc(doc(db, "invoices", invId), { status: "unpaid", paidAt: null });
+    }
   };
 
   // 残高再計算
@@ -3288,7 +3513,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory, ini
     const opening = overrideOpening !== undefined ? overrideOpening : (bal.openingBalance || 0);
     // 全請求書（paid/unpaid問わず）− 全入金 = 元帳と同じ計算
     const invoiceTotal = invoices.filter(i => i.clientId === clientId).reduce((a, i) => a + (i.total || 0), 0);
-    const paymentTotal = (paymentHistory || []).filter(p => p.clientId === clientId).reduce((a, p) => a + (p.amount || 0), 0);
+    const paymentTotal = (paymentHistory || []).filter(p => p.clientId === clientId).reduce((a, p) => a + (p.amount || 0) + (p.fee || 0), 0);
     const correct = opening + invoiceTotal - paymentTotal;
     const update = { ...bal, clientId, openingBalance: opening, currentBalance: correct, updatedAt: serverTimestamp() };
     if (overrideOpeningDate) update.openingDate = overrideOpeningDate;
@@ -3320,6 +3545,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory, ini
   });
 
   const filtered = clientList.filter(c => {
+    if (!matchSearch(search, c.name, c.kana)) return false;
     if (filter === "overdue") return c.isOverdue;
     if (filter === "hasBalance") return c.hasBalance;
     return true;
@@ -3358,7 +3584,8 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory, ini
         ))}
       </div>
       {/* フィルタ */}
-      <div style={{ ...s.card, padding: "10px 20px", display: "flex", gap: 8, marginBottom: 0 }}>
+      <div style={{ ...s.card, padding: "10px 20px", display: "flex", gap: 8, marginBottom: 0, alignItems: "center", flexWrap: "wrap" }}>
+        <input style={{ ...s.input, minWidth: 200 }} placeholder="取引先名で検索" value={search} onChange={e => setSearch(e.target.value)} />
         {[["all","すべて"],["overdue","未入金アラートのみ"],["hasBalance","残高ありのみ"]].map(([id,label]) => (
           <button key={id} style={{ ...s.btn(filter===id?"primary":"light"), padding: "5px 14px", fontSize: 13 }} onClick={() => setFilter(id)}>{label}</button>
         ))}
@@ -3387,7 +3614,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory, ini
                   {client.daysSinceOldest > 0 && <div><span style={{ color: C.gray }}>最長経過：</span><span style={{ color: client.daysSinceOldest > 60 ? C.red : client.daysSinceOldest > 30 ? "#856404" : C.gray, fontWeight: 700 }}>{client.daysSinceOldest}日</span></div>}
                 </div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
-                  <button style={{ ...s.btn("gold"), padding: "5px 12px", fontSize: 12 }} onClick={e => { e.stopPropagation(); setBalTarget({ client, balance: client.bal }); }}>入金記録</button>
+                  <button style={{ ...s.btn("gold"), padding: "5px 12px", fontSize: 12 }} onClick={e => { e.stopPropagation(); setBalTarget({ client, balance: client.bal }); }}>入金処理</button>
                   <button style={{ ...s.btn("light"), padding: "5px 12px", fontSize: 12 }} onClick={e => { e.stopPropagation(); setOpeningTarget(client); setOpeningAmount(String(client.bal.openingBalance || 0)); setOpeningDate(client.bal.openingDate || today().slice(0,7)+"-01"); }}>期首残高</button>
                   {client.isOverdue && (
                     <span style={{ position: "relative", display: "inline-block" }}>
@@ -3415,10 +3642,11 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory, ini
                     entries.push({ date: bal.openingDate || "0000-00-00", type: "opening", description: "期首残高（繰越）", debit: bal.openingBalance, credit: 0 });
                   }
                   clientInvoices.forEach(inv => {
-                    entries.push({ date: inv.date || "", type: "invoice", description: `請求書 ${inv.docNo}`, debit: inv.total || 0, credit: 0, status: inv.status, dueDate: inv.dueDate || "" });
+                    entries.push({ date: inv.date || "", type: "invoice", description: `請求書 ${inv.docNo}`, debit: inv.total || 0, credit: 0, status: inv.status, dueDate: inv.dueDate || "", invId: inv.id, docNo: inv.docNo });
                   });
                   (paymentHistory || []).filter(p => p.clientId === client.id).forEach(ph => {
-                    entries.push({ date: ph.date || "", type: "payment", description: "入金", debit: 0, credit: ph.amount || 0, phId: ph.id });
+                    const fee = ph.fee || 0;
+                    entries.push({ date: ph.date || "", type: "payment", description: fee > 0 ? `入金（振込手数料 ¥${fmt(fee)} 当社負担）` : "入金", debit: 0, credit: (ph.amount || 0) + fee, phId: ph.id });
                   });
                   entries.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
                   let running = 0;
@@ -3445,9 +3673,14 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory, ini
                             <td style={{ ...s.td, textAlign: "right", color: e.debit ? C.red : "transparent" }}>{e.debit ? `¥${fmt(e.debit)}` : ""}</td>
                             <td style={{ ...s.td, textAlign: "right", color: e.credit ? C.green : "transparent" }}>{e.credit ? `¥${fmt(e.credit)}` : ""}</td>
                             <td style={{ ...s.td, textAlign: "right", fontWeight: 700, color: e.balance > 0 ? C.red : C.green }}>¥{fmt(e.balance)}</td>
-                            <td style={s.td}>{e.type === "payment" && e.phId && (
-                              <button style={{ ...s.btn("red"), padding: "3px 8px", fontSize: 11 }} onClick={() => cancelPayment(paymentHistory.find(p => p.id === e.phId))}>取消</button>
-                            )}</td>
+                            <td style={s.td}>
+                              {e.type === "payment" && e.phId && (
+                                <button style={{ ...s.btn("red"), padding: "3px 8px", fontSize: 11 }} onClick={() => cancelPayment(paymentHistory.find(p => p.id === e.phId))}>取消</button>
+                              )}
+                              {e.type === "invoice" && e.invId && e.status !== "paid" && (
+                                <button style={{ ...s.btn("green"), padding: "3px 8px", fontSize: 11 }} onClick={() => markInvoicePaid(e.invId, e.docNo, true)}>入金済にする</button>
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -3666,13 +3899,13 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory, ini
 
 // ── Clients ───────────────────────────────────────────────────────────────────
 function ClientsPage({ clients, divisions, isAdmin, deliveries }) {
-  const [form, setForm] = useState({ name: "", kana: "", address: "", tel: "", email: "", email2: "", email3: "", email4: "", billingType: "immediate", closingDays: [], sendMode: "auto", isOneTime: false, divisionId: "" });
+  const [form, setForm] = useState({ name: "", kana: "", address: "", tel: "", email: "", email2: "", email3: "", email4: "", billingType: "immediate", closingDays: [], sendMode: "manual", isOneTime: false, divisionId: "" });
   const [editing, setEditing] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [importing, setImporting] = useState(false);
   const [selected, setSelected] = useState(new Set());
   const [search, setSearch] = useState("");
-  const filteredClients = clients.filter(c => !search || (c.name||"").includes(search) || (c.kana||"").includes(search) || (c.tel||"").includes(search));
+  const filteredClients = clients.filter(c => matchSearch(search, c.name, c.kana, c.tel));
   const setF = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const save = async () => {
     if (!form.name) return alert("取引先名を入力してください");
@@ -3691,10 +3924,12 @@ function ClientsPage({ clients, divisions, isAdmin, deliveries }) {
       }
     }
     const data = { ...form, closingDays: Array.isArray(form.closingDays) ? form.closingDays.map(Number) : [], updatedAt: serverTimestamp() };
+    data.paymentMonths = Number(form.paymentMonths) || 1;
+    data.ratePercent = (form.ratePercent === "" || form.ratePercent === null || form.ratePercent === undefined) ? null : Number(form.ratePercent);
     if (editing) await updateDoc(doc(db, "clients", editing.id), data);
     else { data.createdAt = serverTimestamp(); await addDoc(collection(db, "clients"), data); }
     setShowForm(false); setEditing(null);
-    setForm({ name: "", kana: "", address: "", tel: "", email: "", email2: "", email3: "", email4: "", billingType: "immediate", closingDays: [], sendMode: "auto", isOneTime: false, divisionId: "" });
+    setForm({ name: "", kana: "", address: "", tel: "", email: "", email2: "", email3: "", email4: "", billingType: "immediate", closingDays: [], sendMode: "manual", isOneTime: false, divisionId: "" });
   };
   const edit = (c) => {
     const cd = c.closingDays;
@@ -3768,8 +4003,9 @@ function ClientsPage({ clients, divisions, isAdmin, deliveries }) {
           batch.update(doc(db, "clients", existing.id), data);
           updateCount++;
         } else {
+          // 新規は送信方法を明示的に「手動」で作成（未設定のまま自動送信される事故を防ぐ）
           const ref = doc(collection(db, "clients"));
-          batch.set(ref, { ...data, createdAt: serverTimestamp() });
+          batch.set(ref, { ...data, sendMode: "manual", createdAt: serverTimestamp() });
           addCount++;
         }
       }
@@ -3856,6 +4092,17 @@ function ClientsPage({ clients, divisions, isAdmin, deliveries }) {
                 </div>
               </div>
             )}
+            <div style={s.col}><span style={s.label}>支払サイト（支払期限）</span>
+              <select style={s.select} value={form.paymentMonths || 1} onChange={e => setF("paymentMonths", Number(e.target.value))}>
+                <option value={1}>翌月末払い</option>
+                <option value={2}>翌々月末払い</option>
+                <option value={3}>3ヶ月後末払い</option>
+              </select>
+            </div>
+            <div style={s.col}><span style={s.label}>掛け率（%）</span>
+              <input style={{ ...s.input, width: 90 }} type="number" {...noWheel} value={form.ratePercent ?? ""} onChange={e => setF("ratePercent", e.target.value)} placeholder="例: 70" />
+              <span style={{ fontSize: 10, color: C.gray }}>商品定価×掛け率で単価を自動計算（取引先別単価があればそちら優先）</span>
+            </div>
             <div style={s.col}><span style={s.label}>送信方法</span>
               <select style={s.select} value={form.sendMode||"manual"} onChange={e => setF("sendMode",e.target.value)}>
                 <option value="auto">自動送信</option>
@@ -4111,7 +4358,7 @@ function ProductsPage({ products, company, isAdmin }) {
         <table style={s.table}>
           <thead><tr>{isAdmin && <th style={s.th}><input type="checkbox" onChange={e=>{const f=[...products].filter(p=>(!catFilter||p.category===catFilter)&&(!search||(p.name||"").includes(search)||(p.code||"").includes(search)||(p.jan||"").includes(search)));setSelected(e.target.checked?new Set(f.map(p=>p.id)):new Set());}} checked={(() => {const f=[...products].filter(p=>(!catFilter||p.category===catFilter)&&(!search||(p.name||"").includes(search)||(p.code||"").includes(search)||(p.jan||"").includes(search)));return f.length>0&&f.every(p=>selected.has(p.id));})()}/></th>}<th style={s.th}>商品名</th><th style={s.th}>コード</th><th style={s.th}>カテゴリ</th><th style={s.th}>JAN</th><th style={s.th}>単位</th><th style={s.th}>標準単価</th><th style={s.th}>税率</th><th style={s.th}>備考</th><th style={s.th}>操作</th></tr></thead>
           <tbody>
-            {[...products].filter(p => (!catFilter || p.category === catFilter) && (!search || (p.name||"").includes(search) || (p.code||"").includes(search) || (p.jan||"").includes(search))).sort((a,b)=>(a.code||"").localeCompare(b.code||"","ja",{numeric:true})).map(p => (
+            {[...products].filter(p => (!catFilter || p.category === catFilter) && matchSearch(search, p.name, p.code, p.jan)).sort((a,b)=>(a.code||"").localeCompare(b.code||"","ja",{numeric:true})).map(p => (
               <tr key={p.id} style={selected.has(p.id)?{background:"#EBF5FB"}:{}}>
                 {isAdmin && <td style={s.td}><input type="checkbox" checked={selected.has(p.id)} onChange={e=>{const n=new Set(selected);e.target.checked?n.add(p.id):n.delete(p.id);setSelected(n);}}/></td>}
                 <td style={s.td}>{p.name}</td><td style={s.td}>{p.code}</td><td style={s.td}>{p.category||""}</td><td style={s.td}>{p.jan||""}</td>
@@ -4134,6 +4381,7 @@ function ProductsPage({ products, company, isAdmin }) {
 // ── ClientPrices ──────────────────────────────────────────────────────────────
 function ClientPricesPage({ clients, products, clientPrices, isAdmin }) {
   const [selClient, setSelClient] = useState("");
+  const [clientQuery, setClientQuery] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [formProduct, setFormProduct] = useState("");
   const [formPrice, setFormPrice] = useState("");
@@ -4141,7 +4389,14 @@ function ClientPricesPage({ clients, products, clientPrices, isAdmin }) {
   const [importing, setImporting] = useState(false);
   const [selected, setSelected] = useState(new Set());
 
-  const filtered = selClient ? clientPrices.filter(cp => cp.clientId === selClient) : clientPrices;
+  const filtered = clientPrices.filter(cp => {
+    if (selClient) return cp.clientId === selClient;
+    if (clientQuery) {
+      const cl = clients.find(c => c.id === cp.clientId);
+      return matchSearch(clientQuery, cl?.name, cl?.kana);
+    }
+    return true;
+  });
 
   const save = async () => {
     if (!selClient) return alert("取引先を選択してください");
@@ -4275,12 +4530,16 @@ function ClientPricesPage({ clients, products, clientPrices, isAdmin }) {
         </div>
       </div>
       <div style={{ ...s.card, marginBottom: 16 }}>
-        <div style={s.row}>
+        <div style={{ ...s.row, alignItems: "flex-end" }}>
+          <div style={s.col}>
+            <span style={s.label}>取引先を検索</span>
+            <input style={{ ...s.input, minWidth: 200 }} placeholder="取引先名で検索（全角半角どちらでも可）" value={clientQuery} onChange={e => setClientQuery(e.target.value)} />
+          </div>
           <div style={s.col}>
             <span style={s.label}>取引先で絞り込み</span>
             <select style={s.select} value={selClient} onChange={e => setSelClient(e.target.value)}>
               <option value="">すべて</option>
-              {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              {clients.filter(c => matchSearch(clientQuery, c.name, c.kana)).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
         </div>
@@ -4379,7 +4638,7 @@ function SendHistoryPage({ isAdmin }) {
     return unsub;
   }, []);
   const filtered = history.filter(h =>
-    (h.clientName || "").includes(search) || (h.docNo || "").includes(search)
+    matchSearch(search, h.clientName, h.docNo)
   );
   const methodLabel = { mail: "メール", post: "郵送", fax: "FAX", hand: "手渡し", other: "その他", auto: "自動送信" };
   const deleteH = async (h) => {
@@ -4436,7 +4695,7 @@ function PDFHistoryPage({ isAdmin }) {
     return unsub;
   }, []);
   const filtered = history.filter(h =>
-    (h.clientName || "").includes(search) || (h.docNo || "").includes(search) || (h.type || "").includes(search)
+    matchSearch(search, h.clientName, h.docNo, h.type)
   );
   const deleteH = async (h) => {
     if (!window.confirm(`${h.filename} を削除しますか？`)) return;
@@ -4592,7 +4851,7 @@ function DivisionsPage({ divisions, isAdmin }) {
 }
 
 // ── Recurring Billings ────────────────────────────────────────────────────────
-function RecurringPage({ clients, divisions, invoices, company, balances, isAdmin }) {
+function RecurringPage({ clients, divisions, invoices, company, balances, isAdmin, paymentHistory = [] }) {
   const [items, setItems] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -4723,7 +4982,7 @@ function RecurringPage({ clients, divisions, invoices, company, balances, isAdmi
         </table>
       </div>
       {printTarget && <PrintModeModal invoice={printTarget.invoice} delivery={null}
-        clients={clients} company={company} balances={balances} divisions={divisions} onClose={() => setPrintTarget(null)} />}
+        clients={clients} company={company} balances={balances} divisions={divisions} invoices={invoices} paymentHistory={paymentHistory} deliveries={[]} onClose={() => setPrintTarget(null)} />}
     </div>
   );
 }
@@ -4748,7 +5007,8 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
     try {
       const inv = {
         docNo: genDocNo("INV", invoices), clientId: p.clientId, date: today(),
-        dueDate: nextMonthEnd(today()), billingType: p.billingType || "immediate",
+        dueDate: dueDateFor(cl, (p.billingType === "closing" && p.closingPeriod?.end) ? p.closingPeriod.end : today()), billingType: p.billingType || "immediate",
+        notes: p.notes || "",
         items: p.items, subtotal: p.subtotal, tax: p.tax, total: p.total,
         status: "unpaid", createdAt: serverTimestamp(),
       };
@@ -4780,7 +5040,8 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
       // 承認後メール自動送信
       const emails = getEmails(cl);
       const email = emails[0];
-      if (email && cl.sendMode !== "manual") {
+      // sendMode未設定は「手動」として扱う（画面表示と揃える）。自動送信は明示的にauto/confirmの場合のみ
+      if (email && (cl.sendMode === "auto" || cl.sendMode === "confirm")) {
         try {
           const co = company || {};
           let coInfo = co;
@@ -5478,6 +5739,33 @@ export default function App() {
     return ()=>unsubs.forEach(u=>u());
   }, [user]);
 
+  // データ自己修復：締め請求なのに closingPeriod が無い請求書（旧版・移行データ）に締め期間を補完する。
+  // これが無いと明細書の「締切分」や売上集計が発行日基準になり、「6月分の締め日が7月1日」のような表示になる。
+  const repairedRef = React.useRef(false);
+  useEffect(() => {
+    if (repairedRef.current || !isAdmin || !invoices.length || !deliveries.length) return;
+    const targets = invoices.filter(i => (i.billingType === "closing" || i.billingType === "monthly") && !i.closingPeriod && (i.deliveryRefs?.length));
+    repairedRef.current = true;
+    if (!targets.length) return;
+    (async () => {
+      let fixed = 0;
+      for (const inv of targets) {
+        try {
+          const dates = deliveries.filter(d => (inv.deliveryRefs || []).includes(d.docNo)).map(d => d.date).filter(Boolean).sort();
+          if (!dates.length) continue;
+          const minD = dates[0], maxD = dates[dates.length - 1];
+          const cd = (inv.closingDay !== undefined && inv.closingDay !== null) ? Number(inv.closingDay) : 0;
+          let period = getClosingPeriod(maxD.slice(0, 7), cd, null);
+          if (period.end < maxD) period = getClosingPeriod(monthEndOffset(maxD, 1).slice(0, 7), cd, null);
+          const start = minD < period.start ? minD : period.start;
+          await updateDoc(doc(db, "invoices", inv.id), { closingPeriod: { start, end: period.end }, closingDay: cd });
+          fixed++;
+        } catch (e) { console.warn("締め期間の補完に失敗:", inv.docNo, e.message); }
+      }
+      if (fixed) alert(`旧形式の請求書 ${fixed}件に締め期間を補完しました。\n（締め日表示・売上集計が締め月基準で正しく表示されるようになります）`);
+    })();
+  }, [isAdmin, invoices, deliveries]);
+
   // Auth loading / login screen
   if (user === undefined) return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: C.navy }}><div style={{ color: "white", fontSize: 16 }}>読み込み中...</div></div>;
   if (user === null) return <LoginPage />;
@@ -5545,9 +5833,9 @@ export default function App() {
         {page==="home"&&<HomePage clients={clients} deliveries={deliveries} invoices={invoices} balances={balances} pendings={pendings} setPage={setPage} company={company}/>}
         {page==="dashboard"&&<Dashboard clients={clients} deliveries={deliveries} invoices={invoices} balances={balances}/>}
         {page==="quotations"&&<QuotationsList clients={clients} quotations={quotations} products={products} deliveries={deliveries} company={company} clientPrices={clientPrices} divisions={divisions} isAdmin={isAdmin}/>}
-        {page==="deliveries"&&<DeliveriesList clients={clients} deliveries={deliveries} products={products} invoices={invoices} company={company} balances={balances} clientPrices={clientPrices} divisions={divisions} isAdmin={isAdmin}/>}
-        {page==="invoices"&&<InvoicesList clients={clients} invoices={invoices} deliveries={deliveries} company={company} balances={balances} divisions={divisions} isAdmin={isAdmin} setPage={setPage} setBalanceOpenClientId={setBalanceOpenClientId}/>}
-        {page==="monthly"&&<MonthlyBilling clients={clients} deliveries={deliveries} invoices={invoices} company={company} balances={balances} divisions={divisions}/>}
+        {page==="deliveries"&&<DeliveriesList clients={clients} deliveries={deliveries} products={products} invoices={invoices} company={company} balances={balances} clientPrices={clientPrices} divisions={divisions} isAdmin={isAdmin} paymentHistory={paymentHistory}/>}
+        {page==="invoices"&&<InvoicesList clients={clients} invoices={invoices} deliveries={deliveries} company={company} balances={balances} divisions={divisions} isAdmin={isAdmin} setPage={setPage} setBalanceOpenClientId={setBalanceOpenClientId} paymentHistory={paymentHistory}/>}
+        {page==="monthly"&&<MonthlyBilling clients={clients} deliveries={deliveries} invoices={invoices} company={company} balances={balances} divisions={divisions} paymentHistory={paymentHistory}/>}
         {page==="sales"&&<SalesPage clients={clients} invoices={invoices} divisions={divisions} externalSales={externalSales} historicalSales={historicalSales}/>}
         {page==="salesReport"&&<SalesReportPage clients={clients} invoices={invoices} externalSales={externalSales} historicalSales={historicalSales}/>}
         {page==="yearlyTransition"&&<YearlyTransitionPage clients={clients} invoices={invoices} divisions={divisions} externalSales={externalSales} historicalSales={historicalSales}/>}
@@ -5555,7 +5843,7 @@ export default function App() {
         {page==="clients"&&<ClientsPage clients={clients} divisions={divisions} isAdmin={isAdmin} deliveries={deliveries}/>}
         {page==="products"&&<ProductsPage products={products} company={company} isAdmin={isAdmin}/>}
         {page==="clientPrices"&&<ClientPricesPage clients={clients} products={products} clientPrices={clientPrices} isAdmin={isAdmin}/>}
-        {page==="recurring"&&<RecurringPage clients={clients} divisions={divisions} invoices={invoices} company={company} balances={balances} isAdmin={isAdmin}/>}
+        {page==="recurring"&&<RecurringPage clients={clients} divisions={divisions} invoices={invoices} company={company} balances={balances} isAdmin={isAdmin} paymentHistory={paymentHistory}/>}
         {page==="pending"&&<PendingPage clients={clients} company={company} divisions={divisions} balances={balances} isAdmin={isAdmin} invoices={invoices}/>}
         {page==="divisions"&&<DivisionsPage divisions={divisions} isAdmin={isAdmin}/>}
         {page==="sendHistory"&&<SendHistoryPage isAdmin={isAdmin}/>}
