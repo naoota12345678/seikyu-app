@@ -560,12 +560,12 @@ function printDelivery(d, clients, co) {
   openPrint(docHTML("納品書", buildDeliveryHTML(d, clients, co)));
 }
 
-function printInvoice(inv, clients, co, bal) {
-  openPrint(docHTML("請求書", buildInvoiceHTML(inv, clients, co, bal)));
+function printInvoice(inv, clients, co, bal, opts) {
+  openPrint(docHTML("請求書", buildInvoiceHTML(inv, clients, co, bal, opts)));
 }
 
-function printCombined(d, inv, clients, co, bal) {
-  openPrint(docHTML("納品書＋請求書", `<div class="pb">${buildDeliveryHTML(d, clients, co)}</div>${buildInvoiceHTML(inv, clients, co, bal)}`));
+function printCombined(d, inv, clients, co, bal, opts) {
+  openPrint(docHTML("納品書＋請求書", `<div class="pb">${buildDeliveryHTML(d, clients, co)}</div>${buildInvoiceHTML(inv, clients, co, bal, opts)}`));
 }
 
 function printMeisai(inv, clients, co, bal, opts) {
@@ -597,9 +597,9 @@ function PrintModeModal({ invoice, delivery, clients, company, balances, divisio
     { id: "pdf-meisai", label: "📥 請求明細書PDF", desc: "請求明細書をPDFでダウンロード", ok: !!invoice },
   ];
   const handle = (id) => {
-    if (id === "invoice") printInvoice(invoice, clients, co, bal);
+    if (id === "invoice") printInvoice(invoice, clients, co, bal, meisaiOpts);
     else if (id === "delivery") printDelivery(delivery, clients, co);
-    else if (id === "combined") printCombined(delivery, invoice, clients, co, bal);
+    else if (id === "combined") printCombined(delivery, invoice, clients, co, bal, meisaiOpts);
     else if (id === "meisai") printMeisai(invoice, clients, co, bal, meisaiOpts);
     onClose();
   };
@@ -610,7 +610,7 @@ function PrintModeModal({ invoice, delivery, clients, company, balances, divisio
       let result, type, storagePath;
       if (id === "pdf-invoice") {
         type = "請求書";
-        result = await generatePDF(buildInvoiceHTML(invoice, clients, co, bal), `請求書_${safeName}_${docNo}.pdf`);
+        result = await generatePDF(buildInvoiceHTML(invoice, clients, co, bal, meisaiOpts), `請求書_${safeName}_${docNo}.pdf`);
         storagePath = `pdfs/invoices/${docNo}.pdf`;
       } else if (id === "pdf-delivery") {
         type = "納品書";
@@ -1460,7 +1460,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
         type: "invoice", clientId: d.clientId, clientName: cl?.name || "",
         divisionId: cl?.divisionId || "", deliveryId: d.id, deliveryDocNo: d.docNo,
         items: d.items, subtotal: d.subtotal, tax: d.tax, total: d.total,
-        billingType: "immediate",
+        billingType: "immediate", notes: d.notes || "",
         status: "pending", createdAt: serverTimestamp(),
       });
       await updateDoc(doc(db, "deliveries", d.id), { status: "pending_approval" });
@@ -1595,8 +1595,9 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
 }
 
 // ── Send Record Modal ─────────────────────────────────────────────────────────
-function SendRecordModal({ invoice, clients, company, divisions, balances, onClose }) {
+function SendRecordModal({ invoice, clients, company, divisions, balances, invoices = [], paymentHistory = [], onClose }) {
   const cl = clients.find(c => c.id === invoice?.clientId) || {};
+  const summaryOpts = invoice ? { summary: calcMeisaiSummary(invoice, invoices, paymentHistory, balances) } : {};
   const [method, setMethod] = useState("mail");
   const [memo, setMemo] = useState("");
   const [email, setEmail] = useState(getEmailStr(cl) || "");
@@ -1614,7 +1615,7 @@ function SendRecordModal({ invoice, clients, company, divisions, balances, onClo
     setResult(null);
     try {
       // PDF生成
-      const invoiceHTML = buildInvoiceHTML(invoice, clients, co, bal);
+      const invoiceHTML = buildInvoiceHTML(invoice, clients, co, bal, summaryOpts);
       const safeName = (cl.name||"").replace(/[\\/:*?"<>|]/g,"_");
       const { blob, filename } = await generatePDF(invoiceHTML, `請求書_${safeName}_${invoice.docNo}.pdf`);
 
@@ -1745,8 +1746,9 @@ function SendRecordModal({ invoice, clients, company, divisions, balances, onClo
 }
 
 // ── Resend Modal ──────────────────────────────────────────────────────────────
-function ResendModal({ invoice, clients, company, divisions, balances, onClose }) {
+function ResendModal({ invoice, clients, company, divisions, balances, invoices = [], paymentHistory = [], onClose }) {
   const cl = clients.find(c => c.id === invoice?.clientId) || {};
+  const summaryOpts = invoice ? { summary: calcMeisaiSummary(invoice, invoices, paymentHistory, balances) } : {};
   const [message, setMessage] = useState("先日お送りいたしました請求書につきまして、改めてお送りいたします。\nご査収のほど、よろしくお願いいたします。");
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
@@ -1772,7 +1774,7 @@ function ResendModal({ invoice, clients, company, divisions, balances, onClose }
       if (!pdfUrl) {
         try {
           const rBal = balances?.[invoice.clientId];
-          const invoiceHTML = buildInvoiceHTML(invoice, [cl], co, rBal);
+          const invoiceHTML = buildInvoiceHTML(invoice, [cl], co, rBal, summaryOpts);
           const safeName = (cl.name||"").replace(/[\\/:*?"<>|]/g,"_");
           const { blob, filename } = await generatePDF(invoiceHTML, `請求書_${safeName}_${invoice.docNo}.pdf`);
           const storagePath = `pdfs/invoices/${invoice.docNo}.pdf`;
@@ -2106,8 +2108,8 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
       })()}
       {printTarget && <PrintModeModal invoice={printTarget.invoice} delivery={printTarget.delivery}
         clients={clients} company={company} balances={balances} divisions={divisions} invoices={invoices} paymentHistory={paymentHistory} deliveries={deliveries} onClose={() => setPrintTarget(null)} />}
-      {sendTarget && <SendRecordModal invoice={sendTarget} clients={clients} company={company} divisions={divisions} balances={balances} onClose={() => setSendTarget(null)} />}
-      {resendTarget && <ResendModal invoice={resendTarget} clients={clients} company={company} divisions={divisions} balances={balances} onClose={() => setResendTarget(null)} />}
+      {sendTarget && <SendRecordModal invoice={sendTarget} clients={clients} company={company} divisions={divisions} balances={balances} invoices={invoices} paymentHistory={paymentHistory} onClose={() => setSendTarget(null)} />}
+      {resendTarget && <ResendModal invoice={resendTarget} clients={clients} company={company} divisions={divisions} balances={balances} invoices={invoices} paymentHistory={paymentHistory} onClose={() => setResendTarget(null)} />}
       {reRequestTarget && (() => {
         const inv = reRequestTarget;
         const cl = clients.find(c => c.id === inv.clientId) || {};
@@ -5760,7 +5762,7 @@ export default function App() {
           fixed++;
         } catch (e) { console.warn("締め期間の補完に失敗:", inv.docNo, e.message); }
       }
-      if (fixed) console.log(`締め期間が未記録だった請求書 ${fixed}件に締め期間を補完しました`);
+      if (fixed) alert(`旧形式の請求書 ${fixed}件に締め期間を補完しました。\n（締め日表示・売上集計が締め月基準で正しく表示されるようになります）`);
     })();
   }, [isAdmin, invoices, deliveries]);
 
