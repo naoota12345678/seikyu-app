@@ -5743,7 +5743,8 @@ export default function App() {
   // これが無いと明細書の「締切分」や売上集計が発行日基準になり、「6月分の締め日が7月1日」のような表示になる。
   const repairedRef = React.useRef(false);
   useEffect(() => {
-    if (repairedRef.current || !isAdmin || !invoices.length || !deliveries.length) return;
+    // ※ isAdmin の const 宣言はこの下（early return の後）なので、ここで参照するとTDZで初回描画がクラッシュする。userRole を直接見る
+    if (repairedRef.current || userRole !== "admin" || !invoices.length || !deliveries.length) return;
     const targets = invoices.filter(i => (i.billingType === "closing" || i.billingType === "monthly") && !i.closingPeriod && (i.deliveryRefs?.length));
     repairedRef.current = true;
     if (!targets.length) return;
@@ -5764,7 +5765,7 @@ export default function App() {
       }
       if (fixed) alert(`旧形式の請求書 ${fixed}件に締め期間を補完しました。\n（締め日表示・売上集計が締め月基準で正しく表示されるようになります）`);
     })();
-  }, [isAdmin, invoices, deliveries]);
+  }, [userRole, invoices, deliveries]);
 
   // Auth loading / login screen
   if (user === undefined) return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: C.navy }}><div style={{ color: "white", fontSize: 16 }}>読み込み中...</div></div>;
