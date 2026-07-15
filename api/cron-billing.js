@@ -40,12 +40,9 @@ function totalFromItems(items) {
   return { sub, tax, total: sub + tax };
 }
 
-// 基準日から months ヶ月後の月末日（ローカル日付で組み立て。toISOStringはUTC変換で1日ずれるため使わない）
-// ※ src/App.jsx の monthEndOffset と同じ計算。変更時は両方を揃えること
-function monthEndOffset(dateStr, months) {
-  const [y, m] = (dateStr || todayStr()).split("-").map(Number);
-  const d = new Date(y, (m - 1) + months + 1, 0);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+function nextMonthEnd(dateStr) {
+  const d = new Date(dateStr || todayStr());
+  return new Date(d.getFullYear(), d.getMonth() + 2, 0).toISOString().split("T")[0];
 }
 
 async function genDocNo(prefix) {
@@ -102,25 +99,18 @@ async function sendEmail(to, subject, html) {
   return res.ok;
 }
 
-async function createInvoiceAndProcess({ clientId, divisionId, items, deliveryRefs, deliveryRefItems, deliveryIds, type, sendMode, billingDay, closingPeriod, notes }) {
+async function createInvoiceAndProcess({ clientId, divisionId, items, deliveryRefs, deliveryRefItems, deliveryIds, type, sendMode, billingDay, closingPeriod }) {
   const { sub, tax, total } = totalFromItems(items);
   const docNo = await genDocNo("INV");
 
-  // 取引先の支払サイト（1=翌月末, 2=翌々月末…）。締め請求は締め日基準、それ以外は発行日基準で期限を計算
-  const clientDoc0 = await db.collection("clients").doc(clientId).get();
-  const client0 = clientDoc0.exists ? clientDoc0.data() : {};
-  const dueBase = (closingPeriod && closingPeriod.end) ? closingPeriod.end : todayStr();
-  const dueDate = monthEndOffset(dueBase, Number(client0.paymentMonths) || 1);
-
   const invData = {
     docNo, clientId, divisionId: divisionId || "",
-    date: todayStr(), dueDate,
+    date: todayStr(), dueDate: nextMonthEnd(todayStr()),
     billingType: type === "recurring" ? "recurring" : "closing",
     closingDay: billingDay,
     ...(closingPeriod ? { closingPeriod } : {}),
     deliveryRefs: deliveryRefs || [],
     deliveryRefItems: Array.isArray(deliveryRefItems) ? JSON.stringify(deliveryRefItems) : (deliveryRefItems || "[]"),
-    notes: notes || "",
     items, subtotal: sub, tax, total,
     status: "unpaid", createdAt: FieldValue.serverTimestamp(),
   };
@@ -219,11 +209,9 @@ export default async function handler(req, res) {
 
     // 1. 締日処理
     const clientsSnap = await db.collection("clients").get();
-    // sendMode未設定は「手動」として扱う（画面表示と揃える）。手動の取引先は自動締めせず、月締め管理から手動発行する
     const closingClients = clientsSnap.docs.filter(d => {
       const data = d.data();
-      return (data.billingType === "closing" || data.billingType === "monthly") &&
-        (data.sendMode === "auto" || data.sendMode === "confirm");
+      return (data.billingType === "closing" || data.billingType === "monthly") && data.sendMode !== "manual";
     });
 
     for (const clientDoc of closingClients) {
@@ -273,10 +261,9 @@ export default async function handler(req, res) {
               deliveryRefs: dels.map(d => d.data().docNo),
               deliveryRefItems: JSON.stringify(dels.map(d => d.data().items || [])),
               deliveryIds: dels.map(d => d.id),
-              type: "closing", sendMode: client.sendMode || "manual",
+              type: "closing", sendMode: client.sendMode || "auto",
               billingDay: cd,
               closingPeriod: { start: period.start, end: period.end },
-              notes: dels.map(d => d.data().notes).filter(Boolean).join("　／　"),
             });
             results.closing.push({ client: client.name, ...result });
           }
@@ -339,7 +326,7 @@ export default async function handler(req, res) {
           const result = await createInvoiceAndProcess({
             clientId: r.clientId, divisionId: r.divisionId || "",
             items, deliveryRefs: [], deliveryRefItems: [], deliveryIds: [],
-            type: "recurring", sendMode: r.sendMode || "manual",
+            type: "recurring", sendMode: r.sendMode || "auto",
             billingDay: r.billingDay || 0,
           });
           await recurDoc.ref.update({ lastIssuedMonth: ym });
