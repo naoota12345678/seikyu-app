@@ -2794,7 +2794,7 @@ function YearlyTransitionPage({ clients, invoices, divisions, externalSales, his
 }
 
 // ── Sales Page ────────────────────────────────────────────────────────────────
-function SalesPage({ clients, invoices, divisions, externalSales, historicalSales = [] }) {
+function SalesPage({ clients, invoices, divisions, externalSales, historicalSales = [], deliveries = [] }) {
   const [viewMonth, setViewMonth] = useState(today().slice(0, 7));
   const [viewMode, setViewMode] = useState("monthly"); // monthly | daily | yearly | division | client
   const [importing, setImporting] = useState(false);
@@ -3073,6 +3073,11 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
   const prevData = prevIdx >= 0 ? monthlyData[prevIdx] : null;
   const growth = prevData && prevData.grandTotal > 0 ? ((curGrand - prevData.grandTotal) / prevData.grandTotal * 100).toFixed(1) : null;
 
+  // 納品ベースの集計（選択月に納品した分＝未請求含む見込み売上）
+  const mDels = deliveries.filter(d => (d.date || "").slice(0, 7) === viewMonth);
+  const mDelTotal = mDels.reduce((a, d) => a + (d.total || 0), 0);
+  const mDelUnissuedTotal = mDels.filter(d => d.status === "unissued").reduce((a, d) => a + (d.total || 0), 0);
+
   // 前年対比
   const lastYearMonth = (() => {
     const [y, m] = viewMonth.split("-").map(Number);
@@ -3208,6 +3213,11 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
         <div style={{ ...s.card, flex: "2 1 240px", textAlign: "center", margin: 0 }}>
           <div style={{ fontSize: 12, color: C.gray, marginBottom: 6 }}>{viewMonth.split("-")[1]}月 合計売上</div>
           <div style={{ fontSize: 28, fontWeight: 700, color: C.gold }}>¥{fmt(curGrand)}</div>
+        </div>
+        <div style={{ ...s.card, flex: "1 1 200px", textAlign: "center", margin: 0 }}>
+          <div style={{ fontSize: 12, color: C.gray, marginBottom: 6 }}>{viewMonth.split("-")[1]}月 納品合計（見込み）</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: C.navy }}>¥{fmt(mDelTotal)}</div>
+          <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>納品書 {mDels.length}件{mDelUnissuedTotal > 0 ? `・うち未請求 ¥${fmt(mDelUnissuedTotal)}` : ""}</div>
         </div>
         <div style={{ ...s.card, flex: "0 0 auto", margin: 0, display: "flex", flexDirection: "column", justifyContent: "center", gap: 6, padding: "10px 16px" }}>
           <div style={{ whiteSpace: "nowrap", fontSize: 12 }}><span style={{ color: C.gray }}>総件数</span> <span style={{ fontWeight: 700, color: C.navy }}>{curCount} 件</span></div>
@@ -5837,7 +5847,7 @@ export default function App() {
         {page==="deliveries"&&<DeliveriesList clients={clients} deliveries={deliveries} products={products} invoices={invoices} company={company} balances={balances} clientPrices={clientPrices} divisions={divisions} isAdmin={isAdmin} paymentHistory={paymentHistory}/>}
         {page==="invoices"&&<InvoicesList clients={clients} invoices={invoices} deliveries={deliveries} company={company} balances={balances} divisions={divisions} isAdmin={isAdmin} setPage={setPage} setBalanceOpenClientId={setBalanceOpenClientId} paymentHistory={paymentHistory}/>}
         {page==="monthly"&&<MonthlyBilling clients={clients} deliveries={deliveries} invoices={invoices} company={company} balances={balances} divisions={divisions} paymentHistory={paymentHistory}/>}
-        {page==="sales"&&<SalesPage clients={clients} invoices={invoices} divisions={divisions} externalSales={externalSales} historicalSales={historicalSales}/>}
+        {page==="sales"&&<SalesPage clients={clients} invoices={invoices} divisions={divisions} externalSales={externalSales} historicalSales={historicalSales} deliveries={deliveries}/>}
         {page==="salesReport"&&<SalesReportPage clients={clients} invoices={invoices} externalSales={externalSales} historicalSales={historicalSales}/>}
         {page==="yearlyTransition"&&<YearlyTransitionPage clients={clients} invoices={invoices} divisions={divisions} externalSales={externalSales} historicalSales={historicalSales}/>}
         {page==="balance"&&<BalancePage clients={clients} invoices={invoices} balances={balances} company={company} paymentHistory={paymentHistory} initialOpenClientId={balanceOpenClientId} clearInitialOpenClientId={() => setBalanceOpenClientId(null)}/>}
