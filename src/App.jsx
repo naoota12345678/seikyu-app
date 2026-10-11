@@ -5686,6 +5686,43 @@ function LoginPage({ onLogin }) {
 }
 
 // ── App ───────────────────────────────────────────────────────────────────────
+// 新しい版が出たら画面を入れ替える。
+// 画面を開いたままにしていると、古い版が動き続ける（サーバーの仕様が変わると操作が失敗する）。
+// 10分ごとと、タブに戻ってきたときに index.html を読み直し、読み込んでいるプログラムのファイル名
+// （ビルドのたびに変わる /assets/index-xxxx.js）が違えば新しい版と判断する。
+// タブに戻ってきたときは入力の途中ではないので自動で読み込み直す。開いたままのときは帯で知らせる
+const currentBundle = () => (document.querySelector('script[type="module"][src*="/assets/index-"]')?.getAttribute("src") || "");
+function UpdateBanner() {
+  const [stale, setStale] = useState(false);
+  useEffect(() => {
+    const mine = currentBundle();
+    if (!mine) return; // 開発中（vite dev）はファイル名が無いので何もしない
+    let alive = true;
+    const isNewer = async () => {
+      try {
+        const html = await (await fetch("/", { cache: "no-store" })).text();
+        const latest = (html.match(/\/assets\/index-[^"']+\.js/) || [])[0];
+        return !!latest && latest !== mine;
+      } catch { return false; }
+    };
+    const poll = async () => { if (alive && await isNewer()) setStale(true); };
+    const onVisible = async () => {
+      if (document.visibilityState !== "visible") return;
+      if (await isNewer()) window.location.reload();
+    };
+    const timer = setInterval(poll, 10 * 60 * 1000);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { alive = false; clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
+  }, []);
+  if (!stale) return null;
+  return (
+    <div style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 3000, background: "#B8905A", color: "#fff", padding: "8px 16px", textAlign: "center", fontSize: 14, fontWeight: 600 }}>
+      新しい版があります。入力中の内容を保存してから
+      <button onClick={() => window.location.reload()} style={{ marginLeft: 12, padding: "4px 14px", border: "none", borderRadius: 4, background: "#fff", color: "#1C2B4A", fontWeight: 700, cursor: "pointer" }}>更新する</button>
+    </div>
+  );
+}
+
 export default function App() {
   const [user, setUser] = useState(undefined); // undefined=checking, null=not logged in, object=logged in
   const [userRole, setUserRole] = useState(null); // "admin" | "staff"
@@ -5823,6 +5860,7 @@ export default function App() {
 
   return (
     <div style={s.app}>
+      <UpdateBanner />
       <div style={s.sidebar}>
         <div style={s.sideTitle}>
           <div style={{fontSize:16,fontWeight:700}}>📋 請求管理</div>
