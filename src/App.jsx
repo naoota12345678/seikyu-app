@@ -288,7 +288,11 @@ table{width:100%;border-collapse:collapse;margin:0 0 8px}
 .tr td{font-weight:bold;border:1px solid #999}
 .bb{margin-top:10px;font-size:11px;line-height:1.8}
 .pb{page-break-after:always}
-@media print{*{box-sizing:border-box}body{padding:8mm 10mm;width:100%;max-width:100%}table{table-layout:fixed;word-break:break-all}.kakuin{right:-10px!important}}`;
+/* @page の余白を0にすると、ブラウザがヘッダー（about:blank・日付）とフッター（URL・ページ番号）を
+   刷る場所が無くなり、印刷されなくなる。お客様に渡す書類なので余計な文字を載せない。
+   用紙の余白は .sheet が持つ（従来のブラウザ既定余白 約10mm＋body余白 8mm 10mm と同じ寸法）。
+   .np は改ページ直後の書類（納品書＋請求書の2枚目）に上余白をつけるためのもの */
+@media print{@page{margin:0}*{box-sizing:border-box}body{padding:0;width:100%;max-width:100%}.sheet{padding:18mm 20mm}.np{padding-top:18mm}table{table-layout:fixed;word-break:break-all}.kakuin{right:-10px!important}}`;
 
 const DETAIL_ROWS = 18;
 
@@ -359,7 +363,8 @@ function coBlock(c, doc_, showReg) {
 }
 
 function docHTML(title, bodyHTML) {
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${baseCSS}</style></head><body>${bodyHTML}</body></html>`;
+  // <title> を必ず入れる。空だとブラウザが代わりに about:blank を使う。PDFに保存するときの既定ファイル名にもなる
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title || "書類"}</title><style>${baseCSS}</style></head><body><div class="sheet">${bodyHTML}</div></body></html>`;
 }
 
 function openPrint(html) {
@@ -573,7 +578,7 @@ function printInvoice(inv, clients, co, bal, opts) {
 }
 
 function printCombined(d, inv, clients, co, bal, opts) {
-  openPrint(docHTML("納品書＋請求書", `<div class="pb">${buildDeliveryHTML(d, clients, co)}</div>${buildInvoiceHTML(inv, clients, co, bal, opts)}`));
+  openPrint(docHTML("納品書＋請求書", `<div class="pb">${buildDeliveryHTML(d, clients, co)}</div><div class="np">${buildInvoiceHTML(inv, clients, co, bal, opts)}</div>`));
 }
 
 function printMeisai(inv, clients, co, bal, opts) {
@@ -2574,12 +2579,12 @@ function SalesReportPage({ clients, invoices, externalSales, historicalSales = [
       <td style="padding:10px;border:1px solid #ccc;text-align:right">¥${fmt(grandTotal)}</td>
       <td style="padding:10px;border:1px solid #ccc;text-align:right">${grandCount}件</td></tr>`;
 
-    openPrint(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+    openPrint(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>売上合計資料</title><style>
       body{font-family:'MS PGothic',sans-serif;margin:0;padding:28px;font-size:12px;color:#111}
       h1{text-align:center;font-size:18px;margin:0 0 6px}
       .period{text-align:center;font-size:13px;color:#555;margin-bottom:20px}
       table{width:100%;border-collapse:collapse}
-      @media print{*{box-sizing:border-box}body{padding:10mm;width:100%;max-width:100%}table{table-layout:fixed;word-break:break-all}.kakuin{right:0px!important}}
+      @media print{@page{margin:0}*{box-sizing:border-box}body{padding:20mm;width:100%;max-width:100%}table{table-layout:fixed;word-break:break-all}.kakuin{right:0px!important}}
     </style></head><body>
       <h1>売上合計資料</h1>
       <div class="period">${periodLabel}</div>
