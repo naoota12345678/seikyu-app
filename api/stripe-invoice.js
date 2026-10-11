@@ -1,7 +1,12 @@
+import { authorizeSyncRequest } from "../lib/apiAuth.js";
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
+  // ログイン中の登録済みユーザーだけが呼べる（無いと URL を知っているだけで誰でも Stripe 請求の中継に使える）
+  const auth = await authorizeSyncRequest(req);
+  if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
   const { stripeSecretKey, clientName, email, amount, currency, description, invoiceItems, docNos } = req.body;
 

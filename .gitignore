@@ -30,3 +30,8 @@ dist-ssr
 
 # 本番データのローカルバックアップ（機密・コミット禁止）
 _backups/
+
+# エミュレータのログ
+firestore-debug.log
+firebase-debug.log
+ui-debug.log

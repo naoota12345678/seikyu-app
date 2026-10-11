@@ -48,12 +48,27 @@ function monthEndOffset(dateStr, months) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// 一度使った番号は二度と使わない（src/App.jsx nextDocNo と同じ規則）。今月どこまで振ったかを counters に覚え、
+// 一覧の最大番号と比べて大きい方の次を振る。件数＋1だと、途中の請求書を削除したあとに既存の番号と重複する
 async function genDocNo(prefix) {
   const now = new Date();
   const ym = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
   const snap = await db.collection("invoices").get();
-  const same = snap.docs.filter(d => (d.data().docNo || "").includes(`${prefix}-${ym}`));
-  return `${prefix}-${ym}-${String(same.length + 1).padStart(3, "0")}`;
+  const head = `${prefix}-${ym}-`;
+  const max = snap.docs.reduce((m, d) => {
+    const no = d.data().docNo || "";
+    if (!no.startsWith(head)) return m;
+    const n = parseInt(no.slice(head.length), 10);
+    return Number.isFinite(n) && n > m ? n : m;
+  }, 0);
+  const ref = db.collection("counters").doc(`${prefix}-${ym}`);
+  return db.runTransaction(async (tx) => {
+    const c = await tx.get(ref);
+    const last = c.exists ? (Number(c.data().last) || 0) : 0;
+    const n = Math.max(max, last) + 1;
+    tx.set(ref, { last: n, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    return `${head}${String(n).padStart(3, "0")}`;
+  });
 }
 
 // 前日（JST）が締日かどうか判定（JST 3:00実行なので前日=締日当日）
@@ -102,7 +117,7 @@ async function sendEmail(to, subject, html) {
   return res.ok;
 }
 
-async function createInvoiceAndProcess({ clientId, divisionId, items, deliveryRefs, deliveryRefItems, deliveryIds, type, sendMode, billingDay, closingPeriod, notes }) {
+async function createInvoiceAndProcess({ clientId, divisionId, items, deliveryRefs, deliveryRefItems, deliveryIds, type, sendMode, billingDay, closingPeriod, notes, recurringId }) {
   const { sub, tax, total } = totalFromItems(items);
   const docNo = await genDocNo("INV");
 
@@ -116,6 +131,9 @@ async function createInvoiceAndProcess({ clientId, divisionId, items, deliveryRe
     docNo, clientId, divisionId: divisionId || "",
     date: todayStr(), dueDate,
     billingType: type === "recurring" ? "recurring" : "closing",
+    // 発行元の定期請求を刻む。削除したときに「どの定期請求のどの月を未発行に戻すか」を
+    // 取引先＋月の推測ではなく一意に決められる（同じ取引先に定期請求が複数あっても取り違えない）
+    ...(recurringId ? { recurringId } : {}),
     closingDay: billingDay,
     ...(closingPeriod ? { closingPeriod } : {}),
     deliveryRefs: deliveryRefs || [],
@@ -138,7 +156,8 @@ async function createInvoiceAndProcess({ clientId, divisionId, items, deliveryRe
     clientId, prevBalance: bal.currentBalance || 0,
     currentBalance: (bal.currentBalance || 0) + total,
     paidAmount: bal.paidAmount || 0, updatedAt: FieldValue.serverTimestamp(),
-  });
+  // merge しないと期首残高（openingBalance / openingDate）が消え、請求明細書の前回御請求額と残高再計算が狂う
+  }, { merge: true });
 
   const clientDoc = await db.collection("clients").doc(clientId).get();
   const client = clientDoc.exists ? clientDoc.data() : {};
@@ -219,7 +238,14 @@ export default async function handler(req, res) {
 
     // 1. 締日処理
     const clientsSnap = await db.collection("clients").get();
-    // sendMode未設定は「手動」として扱う（画面表示と揃える）。手動の取引先は自動締めせず、月締め管理から手動発行する
+    // 自動締めの対象は sendMode が auto / confirm の取引先だけ。未設定・manual は対象外で、
+    // 月締め管理から手動で発行する運用（2026-08-09 代表決裁）。
+    // 注意: 本番の取引先はほぼ全社が sendMode 未設定なので、実質この自動締めは動かない。
+    //   納品書の入力が翌月1日9:00（cron実行）に間に合わない月が毎月1〜8件あり、
+    //   自動で締めると「後から入れた納品書がどの請求書にも入らず、翌月のcronも拾わない」
+    //   取り残しが出るため、意図的に手動運用にしている。
+    //   手動発行は必ず「月締め管理」から行うこと（納品書一覧の一括発行を使うと、
+    //   1社1枚のまとめ請求書ではなく納品書ごとのバラバラな即時請求書になる）。
     const closingClients = clientsSnap.docs.filter(d => {
       const data = d.data();
       return (data.billingType === "closing" || data.billingType === "monthly") &&
@@ -328,7 +354,7 @@ export default async function handler(req, res) {
             divisionId: r.divisionId || "",
             items, subtotal: sub, tax, total,
             billingType: "recurring", scheduledSendDate: billingDate,
-            billingDay: r.billingDay || 0,
+            billingDay: r.billingDay || 0, recurringId: recurDoc.id,
             status: "pending", createdAt: FieldValue.serverTimestamp(),
           });
           await recurDoc.ref.update({ lastIssuedMonth: ym });
@@ -340,7 +366,7 @@ export default async function handler(req, res) {
             clientId: r.clientId, divisionId: r.divisionId || "",
             items, deliveryRefs: [], deliveryRefItems: [], deliveryIds: [],
             type: "recurring", sendMode: r.sendMode || "manual",
-            billingDay: r.billingDay || 0,
+            billingDay: r.billingDay || 0, recurringId: recurDoc.id,
           });
           await recurDoc.ref.update({ lastIssuedMonth: ym });
           results.recurring.push({ client: r.clientId, item: r.itemName, ...result });

@@ -3,7 +3,7 @@ import { db, storage, auth } from "./firebase";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import {
   collection, addDoc, getDocs, getDoc, doc, updateDoc, deleteDoc,
-  onSnapshot, query, orderBy, where, serverTimestamp, writeBatch, setDoc
+  onSnapshot, query, orderBy, where, serverTimestamp, writeBatch, setDoc, runTransaction
 } from "firebase/firestore";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
@@ -94,11 +94,92 @@ function parseCSVLine(line) {
   return result;
 }
 
+// 番号は「今月の最大番号＋1」。件数＋1だと、途中の1枚を削除したあとに既存の番号と重複する
+// （納品書と請求書は番号でもつないでいるので、重複すると削除・修正が別の取引先の書類を巻き込む）
 function genDocNo(prefix, list) {
   const now = new Date();
   const ym = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const same = list.filter(d => (d.docNo || "").includes(`${prefix}-${ym}`));
-  return `${prefix}-${ym}-${String(same.length + 1).padStart(3, "0")}`;
+  const head = `${prefix}-${ym}-`;
+  const max = (list || []).reduce((m, d) => {
+    const no = d.docNo || "";
+    if (!no.startsWith(head)) return m;
+    const n = parseInt(no.slice(head.length), 10);
+    return Number.isFinite(n) && n > m ? n : m;
+  }, 0);
+  return `${head}${String(max + 1).padStart(3, "0")}`;
+}
+
+// 実際に書類へ付ける番号。一度使った番号は二度と使わない：今月どこまで振ったかを counters/{種類-年月} に
+// 覚えておき、一覧の最大番号と比べて大きい方の次を振る（cron-billing の genDocNo と同じ規則）。
+// 一覧の最大番号だけで決めると、最後の1枚を削除したあとに同じ番号がもう一度付き、
+// 取引先の手元に同じ番号で中身の違う書類が2枚できる
+async function nextDocNo(prefix, list = []) {
+  const fromList = genDocNo(prefix, list);
+  const head = fromList.slice(0, fromList.lastIndexOf("-") + 1);
+  const ref = doc(db, "counters", head.slice(0, -1));
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    const last = snap.exists() ? (Number(snap.data().last) || 0) : 0;
+    const n = Math.max(parseInt(fromList.slice(head.length), 10), last + 1);
+    tx.set(ref, { last: n, updatedAt: serverTimestamp() }, { merge: true });
+    return `${head}${String(n).padStart(3, "0")}`;
+  });
+}
+
+// 番号の付いた書類を削除する前に呼ぶ。消す番号を counters に「使用済み」として刻む。
+// counters が無い月（この修正の前に振った番号）は、最後の1枚を消すと一覧の最大が下がり、
+// 次の書類に同じ番号が付いてしまうため。刻めなかったら例外を投げる＝呼び出し側は削除しない（安全側）
+async function rememberUsedDocNos(docNos) {
+  const byCounter = {};
+  for (const no of docNos || []) {
+    const m = /^([A-Z]+-\d{6})-(\d+)$/.exec(no || "");
+    if (!m) continue;
+    byCounter[m[1]] = Math.max(byCounter[m[1]] || 0, parseInt(m[2], 10));
+  }
+  for (const [key, n] of Object.entries(byCounter)) {
+    const ref = doc(db, "counters", key);
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      const last = snap.exists() ? (Number(snap.data().last) || 0) : 0;
+      if (last < n) tx.set(ref, { last: n, updatedAt: serverTimestamp() }, { merge: true });
+    });
+  }
+}
+
+// 納品書にひも付く請求書。発行時に刻んだ invoiceId があればそれだけで引く。
+// 伝票番号で引くと、番号が重複しているとき別の取引先の請求書まで消したり書き換えたりする
+function linkedInvoicesOf(d, invoices) {
+  if (!d) return [];
+  if (d.invoiceId) return invoices.filter(i => i.id === d.invoiceId);
+  return d.docNo ? invoices.filter(i => i.deliveryRef === d.docNo || (i.deliveryRefs || []).includes(d.docNo)) : [];
+}
+// 請求書にひも付く納品書（linkedInvoicesOf の逆向き。同じ規則で引く）
+function linkedDeliveriesOf(inv, deliveries) {
+  return deliveries.filter(d => d.invoiceId ? d.invoiceId === inv.id
+    : (inv.deliveryRef === d.docNo || (inv.deliveryRefs || []).includes(d.docNo)));
+}
+
+// 請求書を消すときの売掛の戻し（発行時に足した「差引請求額」を引く）。引かないと売掛残高が過大なまま残る。
+// 削除と同じ batch に入れて原子化するため、書き込む内容だけを作る（削除だけ成功して戻しが失敗すると、
+// 発行し直しで売掛が二重に積まれる）。購読中の balances ではなく getDoc で読み直し、同じ取引先は合算する。
+// 書き込みは merge:true で行うこと（openingBalance / openingDate を残高再計算が使う）
+async function balanceReversalWrites(invs) {
+  const byClient = {};
+  for (const inv of invs) {
+    byClient[inv.clientId] = (byClient[inv.clientId] || 0) + (inv.total || 0) - (inv.withholding ? (inv.withholdingAmount || 0) : 0);
+  }
+  const out = [];
+  for (const [clientId, amount] of Object.entries(byClient)) {
+    const ref = doc(db, "clientBalances", clientId);
+    const snap = await getDoc(ref);
+    const bal = snap.exists() ? snap.data() : {};
+    out.push({ ref, data: {
+      clientId, prevBalance: bal.currentBalance || 0,
+      currentBalance: (bal.currentBalance || 0) - amount,
+      paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
+    } });
+  }
+  return out;
 }
 
 // 締日ユーティリティ
@@ -704,7 +785,7 @@ function BalanceModal({ client, balance, onClose }) {
       paidAmount: (balance?.paidAmount || 0) + clearAmount,
       lastPaidDate: date, lastPaidAmount: n,
       updatedAt: serverTimestamp(),
-    });
+    }, { merge: true });
     // 入金履歴を保存
     await addDoc(collection(db, "paymentHistory"), {
       clientId: client.id, clientName: client.name || "",
@@ -852,16 +933,19 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
     const isImmediate = cl && cl.billingType !== "closing" && cl.billingType !== "monthly";
     const isEdit = editing?.id;
     const autoInv = isImmediate && !isEdit;
-    const data = { ...form, docNo: (isEdit && editing.docNo) || genDocNo("NO", deliveries), status: (isEdit && editing.status) || (autoInv ? "invoiced" : "unissued"), subtotal: sub, tax, total: grandTotal, updatedAt: serverTimestamp() };
+    const data = { ...form, docNo: (isEdit && editing.docNo) || await nextDocNo("NO", deliveries), status: (isEdit && editing.status) || (autoInv ? "invoiced" : "unissued"), subtotal: sub, tax, total: grandTotal, updatedAt: serverTimestamp() };
     if (isEdit) {
       await updateDoc(doc(db, "deliveries", editing.id), data);
       // 紐づく請求書があれば連動更新
-      const linkedInvs = invoices.filter(i => i.deliveryRef === editing.docNo || (i.deliveryRefs || []).includes(editing.docNo));
+      // 伝票番号ではなく発行時に刻んだ invoiceId で引く（番号が重複していると別の取引先の請求書を書き換える）
+      const linkedInvs = linkedInvoicesOf(editing, invoices);
       for (const inv of linkedInvs) {
         if (inv.deliveryRefs?.length > 1) {
           // 締日請求（複数納品書まとめ）→ 全納品書のitemsを再集計
           const allDels = deliveries.map(d => d.id === editing.id ? { ...d, items: form.items, subtotal: sub, tax, total: grandTotal } : d);
-          const relDels = inv.deliveryRefs.map(ref => allDels.find(d => d.docNo === ref)).filter(Boolean);
+          // deliveryRefItems は deliveryRefs と同じ並び順で読まれる（請求明細書）ので、並びを deliveryRefs にそろえる
+          const relDels = linkedDeliveriesOf(inv, allDels)
+            .sort((a, b) => inv.deliveryRefs.indexOf(a.docNo) - inv.deliveryRefs.indexOf(b.docNo));
           const allItems = relDels.flatMap(d => d.items || []);
           const recalc = totalFromItems(allItems);
           const oldTotal = inv.total || 0;
@@ -874,7 +958,7 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
               clientId: form.clientId, prevBalance: bal.currentBalance || 0,
               currentBalance: (bal.currentBalance || 0) + diff,
               paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
-            });
+            }, { merge: true });
           }
         } else {
           // 即時請求（1対1）→ そのまま反映
@@ -887,7 +971,7 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
               clientId: form.clientId, prevBalance: bal.currentBalance || 0,
               currentBalance: (bal.currentBalance || 0) + diff,
               paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
-            });
+            }, { merge: true });
           }
         }
       }
@@ -897,7 +981,7 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
       // 即時請求 + 自動発行ONなら請求書を自動作成
       if (autoInv) {
         const inv = {
-          docNo: genDocNo("INV", invoices), clientId: form.clientId, date: form.date,
+          docNo: await nextDocNo("INV", invoices), clientId: form.clientId, date: form.date,
           dueDate: dueDateFor(cl, form.date), billingType: "immediate",
           items: form.items, subtotal: sub, tax, total: grandTotal,
           notes: form.notes || "",
@@ -912,10 +996,12 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
           clientId: form.clientId, prevBalance: bal.currentBalance || 0,
           currentBalance: (bal.currentBalance || 0) + grandTotal,
           paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
-        });
+        }, { merge: true });
         // メール送信（sendMode=autoの場合）
         const emails = getEmails(cl);
+        let mailResult = "";
         if (emails.length && cl.sendMode === "auto") {
+          mailResult = "（メールは送れませんでした。請求書一覧から送信してください）";
           let coInfo = company || {};
           if (form.divisionId) {
             const div = divisions.find(d => d.id === form.divisionId);
@@ -945,10 +1031,11 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
                 memo: "納品書作成時の自動発行・送信", amount: grandTotal, sentAt: serverTimestamp(), sentBy: "immediate-auto",
               });
               await updateDoc(doc(db, "invoices", invRef.id), { sentStatus: "sent", lastSentAt: serverTimestamp() });
+              mailResult = "（メール送信済み）";
             }
           } catch (e) { console.warn("自動送信エラー:", e.message); }
         }
-        alert(`納品書を作成し、請求書（${inv.docNo}）を自動発行しました${emails.length && cl.sendMode === "auto" ? "（メール送信済み）" : ""}`);
+        alert(`納品書を作成し、請求書（${inv.docNo}）を自動発行しました${mailResult}`);
         onSave();
         return;
       }
@@ -1024,7 +1111,7 @@ function QuotationForm({ clients, products, quotations, clientPrices, divisions,
   const save = async () => {
     if (!form.clientId) return alert("取引先を選択してください");
     if (!form.items.some(i => i.name)) return alert("品目を入力してください");
-    const data = { ...form, docNo: editing?.docNo || genDocNo("EST", quotations), status: editing?.status || "draft", subtotal: sub, tax, total: grandTotal, updatedAt: serverTimestamp() };
+    const data = { ...form, docNo: editing?.docNo || await nextDocNo("EST", quotations), status: editing?.status || "draft", subtotal: sub, tax, total: grandTotal, updatedAt: serverTimestamp() };
     if (editing) await updateDoc(doc(db, "quotations", editing.id), data);
     else { data.createdAt = serverTimestamp(); await addDoc(collection(db, "quotations"), data); }
     onSave();
@@ -1092,10 +1179,19 @@ function QuotationsList({ clients, quotations, products, deliveries, company, cl
     const cn = clients.find(c => c.id === q.clientId)?.name || "";
     return matchSearch(search, cn, q.docNo);
   });
-  const deleteQ = async (id) => { if (confirm("削除しますか？")) await deleteDoc(doc(db, "quotations", id)); };
+  const deleteQ = async (id) => {
+    if (!confirm("削除しますか？")) return;
+    try {
+      // 消す番号を使用済みとして刻んでから消す（次の見積書に同じ番号を付けない）
+      await rememberUsedDocNos([quotations.find(q => q.id === id)?.docNo]);
+      await deleteDoc(doc(db, "quotations", id));
+    } catch (e) {
+      alert(`削除に失敗しました。通信状態を確認して、もう一度お試しください。\n（${e.message}）`);
+    }
+  };
   const toDelivery = async (q) => {
     const data = {
-      docNo: genDocNo("NO", deliveries), clientId: q.clientId, divisionId: q.divisionId || "",
+      docNo: await nextDocNo("NO", deliveries), clientId: q.clientId, divisionId: q.divisionId || "",
       date: today(), notes: q.notes || "", items: q.items,
       subtotal: q.subtotal, tax: q.tax, total: q.total,
       status: "unissued", quotationRef: q.docNo, createdAt: serverTimestamp(),
@@ -1384,12 +1480,21 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
   const filteredTotal = filtered.reduce((a, d) => a + (d.total || 0), 0);
   const deleteDSingle = async (id) => {
     const del = deliveries.find(d => d.id === id);
-    await deleteDoc(doc(db, "deliveries", id));
-    // 関連する請求書を削除
-    if (del?.docNo) {
-      const relInvs = invoices.filter(i => i.deliveryRef === del.docNo || (i.deliveryRefs || []).includes(del.docNo));
-      for (const inv of relInvs) await deleteDoc(doc(db, "invoices", inv.id));
-    }
+    // 関連する請求書も削除し、発行時に足した残高を戻す（戻さないと売掛が過大に残る）。
+    // 伝票番号は重複していることがあるので、発行時に刻んだ invoiceId で引く（番号で引くと別の取引先の請求書まで消す）
+    const relInvs = linkedInvoicesOf(del, invoices);
+    // 締め請求（複数の納品書を1通にまとめた請求書）を消すときは、まとめたほかの納品書を「未請求」に戻す。
+    // 戻さないと請求済のまま残り、どの請求書にも載らなくなる
+    const others = relInvs.flatMap(i => linkedDeliveriesOf(i, deliveries)).filter(x => x.id !== id && x.status === "invoiced");
+    // 消す番号を使用済みとして刻んでから、納品書・請求書の削除と残高の戻しを1つの batch で行う
+    await rememberUsedDocNos([del?.docNo, ...relInvs.map(i => i.docNo)]);
+    const balWrites = await balanceReversalWrites(relInvs);
+    const batch = writeBatch(db);
+    batch.delete(doc(db, "deliveries", id));
+    relInvs.forEach(inv => batch.delete(doc(db, "invoices", inv.id)));
+    others.forEach(x => batch.update(doc(db, "deliveries", x.id), { status: "unissued", invoiceId: null }));
+    balWrites.forEach(w => batch.set(w.ref, w.data, { merge: true }));
+    await batch.commit();
     // 関連する承認待ち（pendingBillings）を削除
     const pbSnap = await getDocs(query(collection(db, "pendingBillings"), where("status", "==", "pending")));
     for (const pbDoc of pbSnap.docs) {
@@ -1400,26 +1505,47 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
   };
   const deleteD = async (id) => {
     const del = deliveries.find(d => d.id === id);
-    const relInvs = del?.docNo ? invoices.filter(i => i.deliveryRef === del.docNo || (i.deliveryRefs || []).includes(del.docNo)) : [];
-    if (!confirm(`削除しますか？${relInvs.length ? `\n関連する請求書（${relInvs.map(i => i.docNo).join(", ")}）も削除されます` : ""}`)) return;
-    await deleteDSingle(id);
+    const relInvs = linkedInvoicesOf(del, invoices);
+    // 入金済の請求書ごと消すと、入金で減った残高からさらに請求額を引いて二重に減る
+    const paidInvs = relInvs.filter(i => i.status === "paid");
+    if (paidInvs.length) return alert(`入金済の請求書（${paidInvs.map(i => i.docNo).join(", ")}）が紐づいています。\n先に入金を取り消してください。`);
+    const relTotal = relInvs.reduce((a, i) => a + (i.total || 0) - (i.withholding ? (i.withholdingAmount || 0) : 0), 0);
+    const others = relInvs.flatMap(i => linkedDeliveriesOf(i, deliveries)).filter(x => x.id !== id && x.status === "invoiced");
+    if (!confirm(`削除しますか？${relInvs.length
+      ? `\n関連する請求書（${relInvs.map(i => i.docNo).join(", ")}）も削除され、\n売掛残高から ¥${fmt(relTotal)} を差し引きます`
+        + (others.length ? `\n同じ請求書にまとめた納品書 ${others.map(x => x.docNo).join(", ")} は「未請求」に戻ります（月締め管理から発行し直してください）` : "")
+      : ""}`)) return;
+    try { await deleteDSingle(id); }
+    catch (e) { alert(`削除に失敗しました。通信状態を確認して、もう一度お試しください。\n（${e.message}）`); }
   };
+  // 一括で消せるのは未請求の納品書だけ。請求済み・承認待ちを一括で消すと、紐づく請求書と売掛が残ったままになる
+  // （1枚ずつの「削除」は請求書ごと消して売掛を戻す）
   const bulkDelD = async () => {
     if (!selected.size) return;
-    if (!confirm(`${selected.size}件の納品書を削除しますか？`)) return;
-    // pendingBillingsを1回だけ取得
-    const pbSnap = await getDocs(query(collection(db, "pendingBillings"), where("status", "==", "pending")));
-    const batch = writeBatch(db);
-    for (const id of selected) {
-      batch.delete(doc(db, "deliveries", id));
-      // 関連するpendingBillingsも削除
-      for (const pbDoc of pbSnap.docs) {
-        const d = pbDoc.data();
-        const delIds = d.deliveryIds ? (Array.isArray(d.deliveryIds) ? d.deliveryIds : [d.deliveryIds]) : (d.deliveryId ? [d.deliveryId] : []);
-        if (delIds.includes(id)) batch.delete(pbDoc.ref);
+    const targets = [...selected].map(id => deliveries.find(d => d.id === id)).filter(d => d && d.status === "unissued");
+    const skipped = selected.size - targets.length;
+    if (!targets.length) return alert("削除できる未請求の納品書が選択されていません。\n請求済み・承認待ちの納品書は、1枚ずつ「削除」してください。");
+    if (!confirm(`${targets.length}件の納品書を削除しますか？`
+      + (skipped > 0 ? `\n（請求済み・承認待ち ${skipped}件は削除しません。1枚ずつ「削除」してください）` : ""))) return;
+    try {
+      // 消す番号を使用済みとして刻んでから消す（同じ番号を次の納品書に付けない）
+      await rememberUsedDocNos(targets.map(d => d.docNo));
+      // pendingBillingsを1回だけ取得
+      const pbSnap = await getDocs(query(collection(db, "pendingBillings"), where("status", "==", "pending")));
+      const batch = writeBatch(db);
+      for (const { id } of targets) {
+        batch.delete(doc(db, "deliveries", id));
+        // 関連するpendingBillingsも削除
+        for (const pbDoc of pbSnap.docs) {
+          const d = pbDoc.data();
+          const delIds = d.deliveryIds ? (Array.isArray(d.deliveryIds) ? d.deliveryIds : [d.deliveryIds]) : (d.deliveryId ? [d.deliveryId] : []);
+          if (delIds.includes(id)) batch.delete(pbDoc.ref);
+        }
       }
+      await batch.commit();
+    } catch (e) {
+      return alert(`削除に失敗しました。何も変更していません。\n通信状態を確認して、もう一度お試しください。\n（${e.message}）`);
     }
-    await batch.commit();
     setSelected(new Set());
   };
   const bulkIssueInvoice = async () => {
@@ -1431,16 +1557,15 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
       (skipped > 0 ? `\n（請求済 ${skipped}件はスキップされます）` : "") +
       `\n\n※ メール送信はされません。請求書一覧から個別に送信してください。`;
     if (!confirm(msg)) return;
-    const now = new Date();
-    const ym = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
-    const existingCount = invoices.filter(i => (i.docNo || "").includes(`INV-${ym}`)).length;
+    // 採番済みの番号を積みながら振る（同じループ内で重複させない）
+    const docNoSeq = [...invoices];
     let count = 0;
     const balUpdates = {};
     for (let i = 0; i < unissued.length; i++) {
       const d = unissued[i];
       const dCl = clients.find(c => c.id === d.clientId);
       const inv = {
-        docNo: `INV-${ym}-${String(existingCount + i + 1).padStart(3, "0")}`,
+        docNo: await nextDocNo("INV", docNoSeq),
         clientId: d.clientId, date: d.date,
         dueDate: dueDateFor(dCl, d.date), billingType: "immediate",
         deliveryRef: d.docNo, deliveryRefs: [d.docNo],
@@ -1448,6 +1573,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
         items: d.items, subtotal: d.subtotal, tax: d.tax, total: d.total,
         status: "unpaid", createdAt: serverTimestamp(),
       };
+      docNoSeq.push({ docNo: inv.docNo });
       const invRef = await addDoc(collection(db, "invoices"), inv);
       await updateDoc(doc(db, "deliveries", d.id), { status: "invoiced", invoiceId: invRef.id });
       if (!balUpdates[d.clientId]) balUpdates[d.clientId] = 0;
@@ -1460,7 +1586,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
         clientId, prevBalance: bal.currentBalance || 0,
         currentBalance: (bal.currentBalance || 0) + addAmount,
         paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
-      });
+      }, { merge: true });
     }
     setSelected(new Set());
     alert(`${count}件の請求書を発行しました`);
@@ -1482,7 +1608,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
       return;
     }
     const inv = {
-      docNo: genDocNo("INV", invoices), clientId: d.clientId, date: d.date,
+      docNo: await nextDocNo("INV", invoices), clientId: d.clientId, date: d.date,
       dueDate: dueDateFor(cl, d.date), billingType: "immediate",
       deliveryRef: d.docNo, deliveryRefs: [d.docNo],
       notes: d.notes || "",
@@ -1496,7 +1622,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
       clientId: d.clientId, prevBalance: bal.currentBalance || 0,
       currentBalance: (bal.currentBalance || 0) + d.total,
       paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
-    });
+    }, { merge: true });
     // 即送信（sendMode=autoかつメールあり）
     if (getEmails(cl).length && cl?.sendMode === "auto") {
       try {
@@ -1847,8 +1973,9 @@ function ResendModal({ invoice, clients, company, divisions, balances, invoices 
   };
 
   const handlePrint = () => {
-    const delivery = null;
-    printInvoice(invoice, clients, co, balances?.[invoice?.clientId]);
+    // summaryOpts を渡さないと buildInvoiceHTML が「今の残高」に落ち、過去の請求書を再送で印刷したとき
+    // 前回御請求額・御入金額・繰越金額が発行時と違う数字で郵送される（PDF生成・ほかの印刷経路と同じ扱いにする）
+    printInvoice(invoice, clients, co, balances?.[invoice?.clientId], summaryOpts);
     addDoc(collection(db, "sendHistory"), {
       docNo: invoice.docNo, invoiceId: invoice.id,
       clientId: invoice.clientId, clientName: cl.name || "",
@@ -1905,6 +2032,48 @@ function ResendModal({ invoice, clients, company, divisions, balances, invoices 
   );
 }
 
+// 請求書を削除したあとの残高ドキュメント。発行時に足した「差引請求額」を引く。
+// 引かないと売掛残高が過大なまま残り、「残高再計算」を押すまで誰も気づけない。
+// 残高は取引先ごと（事業部では分けない）ので、キーは clientId のみ。
+// 書き込みは merge:true で行うこと（openingBalance / openingDate を残高再計算が使う）。
+function balanceAfterInvoiceDelete(bal, inv) {
+  const wa = inv.withholding ? (inv.withholdingAmount || 0) : 0;
+  return {
+    clientId: inv.clientId, prevBalance: bal.currentBalance || 0,
+    currentBalance: (bal.currentBalance || 0) - ((inv.total || 0) - wa),
+    paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
+  };
+}
+
+// 「この請求書の月を『発行済み』として塞いでいる定期請求」を探す（まだ書き換えない）。
+// 塞いだままだと cron がその月を飛ばし、画面には「最終発行 2026-08」と出るので、
+// 発行したように見えて実物がどこにも無い状態になる（手で戻す画面も無い）。
+// 削除する前に呼んで、確認ダイアログで「本当に起きること」だけを予告するために使う。
+// 返り値 count: 0=塞いでいない（戻すものが無い）／1=これを戻す（ref）／
+//               2以上=どれを戻すべきか決められないので触らない
+async function findRecurringMonthHolder(inv, clients) {
+  const ym = inv?.billingType === "recurring" ? (inv.date || "").slice(0, 7) : "";
+  if (!ym) return { count: 0, ref: null, ym: "" };
+  // 発行元が刻まれている請求書は、その定期請求だけを見る
+  if (inv.recurringId) {
+    const ref = doc(db, "recurringBillings", inv.recurringId);
+    const snap = await getDoc(ref);
+    if (!snap.exists() || snap.data().lastIssuedMonth !== ym) return { count: 0, ref: null, ym };
+    return { count: 1, ref, ym };
+  }
+  // 発行元が刻まれていない古い請求書は、取引先・対象月で照合する。
+  // 同じ取引先に複数の定期請求があるときは事業部でさらに絞る
+  const snap = await getDocs(collection(db, "recurringBillings"));
+  let hits = snap.docs.filter(d => d.data().clientId === inv.clientId && d.data().lastIssuedMonth === ym);
+  if (hits.length > 1) {
+    const iDiv = inv.divisionId || (clients || []).find(c => c.id === inv.clientId)?.divisionId || "";
+    const narrowed = hits.filter(d => (d.data().divisionId || "") === iDiv);
+    if (narrowed.length === 1) hits = narrowed;
+  }
+  if (hits.length !== 1) return { count: hits.length, ref: null, ym };
+  return { count: 1, ref: hits[0].ref, ym };
+}
+
 // ── Invoices ──────────────────────────────────────────────────────────────────
 function InvoicesList({ clients, invoices, deliveries, company, balances, divisions, isAdmin, setPage, setBalanceOpenClientId, paymentHistory = [] }) {
   const [search, setSearch] = useState("");
@@ -1930,34 +2099,92 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
   });
   const totalBal = Object.values(balances).reduce((a, b) => a + (b.currentBalance || 0), 0);
   const del = async (id) => {
-    if (!confirm("削除しますか？")) return;
-    await deleteDoc(doc(db, "invoices", id));
-    // 関連する承認待ち（再請求系）を削除
+    const inv = invoices.find(i => i.id === id);
+    if (!inv) return alert("削除対象の請求書が見つかりません。画面を再読み込みしてください。");
+    // 入金済のまま消すと、入金で減った残高からさらに請求額を引いて二重に減る。
+    // 先に入金を取り消してもらう（締め請求の取消と同じ扱い）
+    if (inv.status === "paid") return alert("入金済の請求書は削除できません。先に入金を取り消してください。");
+    const wa = inv.withholding ? (inv.withholdingAmount || 0) : 0;
+    // 定期請求ぶんは「本当にその月を塞いでいるか」を先に調べる。
+    // 調べずに予告すると、過去月の請求書を消したときに「戻します」と言って何もしないことになる
+    const holder = await findRecurringMonthHolder(inv, clients);
+    const recurNote = holder.count === 1
+      ? `\n\n定期請求の ${holder.ym} 分を「未発行」に戻します。\n`
+        + `この月の自動発行は請求日の翌朝に一度だけ行われます。すでに過ぎている場合は`
+        + `自動発行されないので、必要なら手動で請求書を作成してください。`
+      : holder.count > 1
+      ? `\n\n⚠ この取引先は ${holder.ym} 分を発行済みの定期請求が ${holder.count}件あり、`
+        + `どれを戻すか決められません。定期請求の「最終発行」は変更されないままになります。`
+      : "";
+    // 納品書から出した請求書なら、納品書を「未請求」に戻す。戻さないと請求済のまま残り、
+    // 発行し直すことも、取り消して直すこともできなくなる
+    const relDels = linkedDeliveriesOf(inv, deliveries).filter(d => d.status === "invoiced");
+    if (!confirm(`${inv.docNo || "この請求書"} を削除しますか？`
+      + `\n\n売掛残高から ¥${fmt((inv.total || 0) - wa)} を差し引きます。`
+      + (relDels.length ? `\n納品書 ${relDels.map(d => d.docNo).join(", ")} を「未請求」に戻します。` : "")
+      + recurNote)) return;
+    // 承認待ちの照合はクエリなので、トランザクションに入る前に済ませる（tx内でクエリは不可）
     const pbSnap = await getDocs(query(collection(db, "pendingBillings"), where("status", "==", "pending")));
-    for (const pbDoc of pbSnap.docs) {
+    const pbRefs = pbSnap.docs.filter(pbDoc => {
       const d = pbDoc.data();
-      const invIds = d.invoiceIds || (d.invoiceId ? [d.invoiceId] : []);
-      if (invIds.includes(id)) await deleteDoc(pbDoc.ref);
+      return (d.invoiceIds || (d.invoiceId ? [d.invoiceId] : [])).includes(id);
+    }).map(pbDoc => pbDoc.ref);
+    // 請求書の削除・残高の戻し・フラグの解放を1つにまとめる。
+    // 順番に書くと、途中で切れたときに「請求書だけ消えて売掛が過大なまま」が残る（KY-027）
+    let released = false;
+    try {
+      // 消す番号を使用済みとして刻んでから消す（次の請求書に同じ番号を付けない）
+      await rememberUsedDocNos([inv.docNo]);
+      await runTransaction(db, async (tx) => {
+        released = false;   // 再試行に備えて毎回リセットする
+        const balRef = doc(db, "clientBalances", inv.clientId);
+        const balSnap = await tx.get(balRef);
+        const recSnap = holder.ref ? await tx.get(holder.ref) : null;
+        tx.delete(doc(db, "invoices", id));
+        relDels.forEach(d => tx.update(doc(db, "deliveries", d.id), { status: "unissued", invoiceId: null }));
+        tx.set(balRef, balanceAfterInvoiceDelete(balSnap.exists() ? balSnap.data() : {}, inv), { merge: true });
+        // 読んでから書くまでに他の人が発行していたら、その月は塞ぎ直されている＝戻さない
+        if (recSnap && recSnap.exists() && recSnap.data().lastIssuedMonth === holder.ym) {
+          tx.update(holder.ref, { lastIssuedMonth: "" });
+          released = true;
+        }
+        pbRefs.forEach(ref => tx.delete(ref));
+      });
+    } catch (e) {
+      return alert(`削除に失敗しました。何も変更していません。\n通信状態を確認して、もう一度お試しください。\n（${e.message}）`);
+    }
+    // 予告したのに戻せなかったときは黙って諦めず、手で直せるように伝える
+    if (holder.count === 1 && !released) {
+      alert(`請求書は削除しましたが、定期請求の ${holder.ym} 分を「未発行」に戻せませんでした。\n\n`
+        + `操作中に「最終発行」が変わったようです。定期請求の画面で対象を確認し、`
+        + `必要なら請求書を手動で作成してください。`);
+    } else if (holder.count > 1) {
+      alert(`請求書は削除しましたが、定期請求の ${holder.ym} 分は「未発行」に戻していません。\n\n`
+        + `この取引先は ${holder.ym} 分を発行済みの定期請求が ${holder.count}件あり、どれを戻すか決められません。\n`
+        + `定期請求の画面で対象を確認し、必要なら請求書を手動で作成してください。`);
     }
   };
   // 締め請求の取り消し：請求書を削除し、対象の納品書を未請求に戻し、残高も戻す
   const cancelClosing = async (inv) => {
     if (inv.status === "paid") return alert("入金済の請求書は取り消せません。先に入金を取り消してください。");
-    const relDels = deliveries.filter(d => d.invoiceId === inv.id || (inv.deliveryRefs || []).includes(d.docNo));
+    // 伝票番号ではなく発行時に刻んだ invoiceId で引く（番号が重複していると別の取引先の納品書まで戻す）
+    const relDels = linkedDeliveriesOf(inv, deliveries);
     const warnSent = inv.sentStatus === "sent" ? "\n\n⚠ この請求書は送信済みです。取引先への連絡もご検討ください。" : "";
     if (!confirm(`${inv.docNo}（¥${fmt(inv.total)}）の締め請求を取り消しますか？\n\n・請求書を削除\n・納品書 ${relDels.length}件を「未請求」に戻す\n・売掛残高から ¥${fmt((inv.total || 0) - (inv.withholding ? (inv.withholdingAmount || 0) : 0))} を差し引く${warnSent}`)) return;
-    const batch = writeBatch(db);
-    relDels.forEach(d => batch.update(doc(db, "deliveries", d.id), { status: "unissued", invoiceId: null }));
-    batch.delete(doc(db, "invoices", inv.id));
-    await batch.commit();
-    // 残高を戻す（発行時に加算した「差引請求額」を減算）
-    const wa = inv.withholding ? (inv.withholdingAmount || 0) : 0;
-    const bal = balances[inv.clientId] || {};
-    await setDoc(doc(db, "clientBalances", inv.clientId), {
-      clientId: inv.clientId, prevBalance: bal.currentBalance || 0,
-      currentBalance: (bal.currentBalance || 0) - ((inv.total || 0) - wa),
-      paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
-    });
+    try {
+      // 消す番号を使用済みとして刻んでから、削除・納品書を未請求に戻す・売掛の戻し
+      // （発行時に加算した「差引請求額」を減算）を1つの batch で行う。
+      // 削除だけ成功して戻しが失敗すると、発行し直しで売掛が二重に積まれる（KY-027）
+      await rememberUsedDocNos([inv.docNo]);
+      const balWrites = await balanceReversalWrites([inv]);
+      const batch = writeBatch(db);
+      relDels.forEach(d => batch.update(doc(db, "deliveries", d.id), { status: "unissued", invoiceId: null }));
+      batch.delete(doc(db, "invoices", inv.id));
+      balWrites.forEach(w => batch.set(w.ref, w.data, { merge: true }));
+      await batch.commit();
+    } catch (e) {
+      return alert(`取り消しに失敗しました。何も変更していません。\n通信状態を確認して、もう一度お試しください。\n（${e.message}）`);
+    }
     alert(`${inv.docNo} を取り消しました。納品書 ${relDels.length}件が未請求に戻り、月締め管理から再発行できます。`);
   };
   return (
@@ -2212,7 +2439,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
             } else {
               if (!confirm(`${cl.name} に ¥${fmt(inv.total || 0)} のStripe請求書を送信します。\n\n対象: ${inv.docNo}\n送信先: ${getEmailStr(cl)}\n\n※ Stripe手数料（3.6%）が発生します。`)) { setStripeSending(false); return; }
               const res = await fetch("/api/stripe-invoice", {
-                method: "POST", headers: { "Content-Type": "application/json" },
+                method: "POST", headers: await authHeaders(),
                 body: JSON.stringify({
                   stripeSecretKey: company.stripeSecretKey,
                   clientName: cl.name, email: getEmailStr(cl),
@@ -2301,7 +2528,7 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
       return;
     }
     const inv = {
-      docNo: genDocNo("INV", invoices), clientId: client.id, date: today(),
+      docNo: await nextDocNo("INV", invoices), clientId: client.id, date: today(),
       dueDate: dueDateFor(client, period.end), billingType: "closing",
       closingDay: period.closingDay, closingPeriod: { start: period.start, end: period.end },
       deliveryRefs: dels.map(d => d.docNo),
@@ -2320,27 +2547,31 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
       clientId: client.id, prevBalance: bal.currentBalance || 0,
       currentBalance: (bal.currentBalance || 0) + sub + tax,
       paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
-    });
+    }, { merge: true });
     alert(`請求書を発行しました（${dels.length}件まとめ、${period.label}）`);
   };
 
   // 締め請求の取り消し（請求書一覧のcancelClosingと同じ処理）
   const cancelClosing = async (inv) => {
     if (inv.status === "paid") return alert("入金済の請求書は取り消せません。先に入金を取り消してください。");
-    const relDels = deliveries.filter(d => d.invoiceId === inv.id || (inv.deliveryRefs || []).includes(d.docNo));
+    // 伝票番号ではなく発行時に刻んだ invoiceId で引く（番号が重複していると別の取引先の納品書まで戻す）
+    const relDels = linkedDeliveriesOf(inv, deliveries);
     const warnSent = inv.sentStatus === "sent" ? "\n\n⚠ この請求書は送信済みです。取引先への連絡もご検討ください。" : "";
     if (!confirm(`${inv.docNo}（¥${fmt(inv.total)}）の締め請求を取り消しますか？\n\n・請求書を削除\n・納品書 ${relDels.length}件を「未請求」に戻す\n・売掛残高から ¥${fmt((inv.total || 0) - (inv.withholding ? (inv.withholdingAmount || 0) : 0))} を差し引く${warnSent}`)) return;
-    const batch = writeBatch(db);
-    relDels.forEach(d => batch.update(doc(db, "deliveries", d.id), { status: "unissued", invoiceId: null }));
-    batch.delete(doc(db, "invoices", inv.id));
-    await batch.commit();
-    const wa = inv.withholding ? (inv.withholdingAmount || 0) : 0;
-    const bal = balances[inv.clientId] || {};
-    await setDoc(doc(db, "clientBalances", inv.clientId), {
-      clientId: inv.clientId, prevBalance: bal.currentBalance || 0,
-      currentBalance: (bal.currentBalance || 0) - ((inv.total || 0) - wa),
-      paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
-    });
+    try {
+      // 消す番号を使用済みとして刻んでから、削除・納品書を未請求に戻す・売掛の戻し
+      // （発行時に加算した「差引請求額」を減算）を1つの batch で行う。
+      // 削除だけ成功して戻しが失敗すると、発行し直しで売掛が二重に積まれる（KY-027）
+      await rememberUsedDocNos([inv.docNo]);
+      const balWrites = await balanceReversalWrites([inv]);
+      const batch = writeBatch(db);
+      relDels.forEach(d => batch.update(doc(db, "deliveries", d.id), { status: "unissued", invoiceId: null }));
+      batch.delete(doc(db, "invoices", inv.id));
+      balWrites.forEach(w => batch.set(w.ref, w.data, { merge: true }));
+      await batch.commit();
+    } catch (e) {
+      return alert(`取り消しに失敗しました。何も変更していません。\n通信状態を確認して、もう一度お試しください。\n（${e.message}）`);
+    }
     alert(`${inv.docNo} を取り消しました。納品書が未請求に戻ったので、修正後に再発行できます。`);
   };
 
@@ -3508,12 +3739,22 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory, ini
     // 残高を戻す（当社負担の振込手数料込みで消し込んだ分を戻す）
     const bal = balances[ph.clientId] || {};
     const prev = bal.currentBalance || 0;
+    // 「直近入金」は取り消したぶんを除いた最新で入れ直す。
+    // 入れ直さないと取り消した入金が表示に残り、消してしまうと前回の入金まで見えなくなる。
+    // 同じ日の入金が複数あるときのために createdAt でも並べ替える（順序が揺れないように）
+    const rest = (paymentHistory || [])
+      .filter(p => p.clientId === ph.clientId && p.id !== ph.id)
+      .sort((a, b) => (b.date || "").localeCompare(a.date || "")
+        || ((b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)));
+    const latest = rest[0];
     await setDoc(doc(db, "clientBalances", ph.clientId), {
       clientId: ph.clientId, prevBalance: prev,
       currentBalance: prev + clearAmount,
       paidAmount: Math.max(0, (bal.paidAmount || 0) - clearAmount),
+      lastPaidDate: latest ? (latest.date || "") : "",
+      lastPaidAmount: latest ? (latest.amount || 0) : 0,
       updatedAt: serverTimestamp(),
-    });
+    }, { merge: true });
     // 入金履歴を削除
     await deleteDoc(doc(db, "paymentHistory", ph.id));
   };
@@ -3853,7 +4094,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory, ini
               const items = clOverdue.map(inv => ({ name: `${inv.docNo} 未入金分`, qty: 1, unitAmount: inv.total || 0 }));
               const res = await fetch("/api/stripe-invoice", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: await authHeaders(),
                 body: JSON.stringify({
                   stripeSecretKey: company.stripeSecretKey,
                   clientName: cl.name, email: getEmailStr(cl),
@@ -5030,9 +5271,11 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
     setSending(p.id);
     try {
       const inv = {
-        docNo: genDocNo("INV", invoices), clientId: p.clientId, date: today(),
+        docNo: await nextDocNo("INV", invoices), clientId: p.clientId, date: today(),
         dueDate: dueDateFor(cl, (p.billingType === "closing" && p.closingPeriod?.end) ? p.closingPeriod.end : today()), billingType: p.billingType || "immediate",
         notes: p.notes || "",
+        // 承認経由でも発行元の定期請求を引き継ぐ（削除時に戻す先を一意に決めるため）
+        ...(p.recurringId ? { recurringId: p.recurringId } : {}),
         items: p.items, subtotal: p.subtotal, tax: p.tax, total: p.total,
         status: "unpaid", createdAt: serverTimestamp(),
       };
@@ -5058,7 +5301,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
         clientId: p.clientId, prevBalance: bal.currentBalance || 0,
         currentBalance: (bal.currentBalance || 0) + p.total,
         paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
-      });
+      }, { merge: true });
       await updateDoc(doc(db, "pendingBillings", p.id), { status: "approved", approvedAt: serverTimestamp(), invoiceDocNo: inv.docNo });
 
       // 承認後メール自動送信
@@ -5128,7 +5371,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
         const items = p.invoiceItems || [{ name: `${p.invoiceDocNo} 未入金分`, qty: 1, unitAmount: p.total || 0 }];
         const res = await fetch("/api/stripe-invoice", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: await authHeaders(),
           body: JSON.stringify({
             stripeSecretKey: company.stripeSecretKey,
             clientName: cl.name, email,
@@ -5154,10 +5397,13 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
           const pdfLink = p.pdfUrl ? `<p style="margin:20px 0"><a href="${p.pdfUrl}" style="display:inline-block;padding:12px 24px;background:#1C2B4A;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold">📄 請求書PDFをダウンロード</a></p>` : "";
           const msgHtml = (p.message || `${cl.name} ${cl.honorific || "御中"}\n\nお支払い期日を過ぎておりますのでご確認をお願いいたします。\n\n対象: ${p.invoiceDocNo}\n金額: ¥${fmt(p.total)}`).replace(/\n/g, "<br/>");
           const htmlBody = msgHtml + pdfLink;
-          await fetch("/api/send-invoice", {
+          const sendRes = await fetch("/api/send-invoice", {
             method: "POST", headers: await authHeaders(),
             body: JSON.stringify({ to: emails, subject: `【お支払いのお願い】${p.invoiceDocNo}`, html: htmlBody }),
           });
+          // 送れたことを確かめてから「送信済み」を記録する。確かめないと、送れていないのに
+          // 送信履歴・送信済み表示が付き、承認待ちからも消えて誰も気づけない（KY-006）
+          if (!sendRes.ok) throw new Error(`メールを送信できませんでした（${sendRes.status}）。承認待ちに残してあるので、もう一度お試しください`);
           await addDoc(collection(db, "sendHistory"), {
             docNo: p.invoiceDocNo, invoiceId: (p.invoiceIds || [p.invoiceId]).join(","),
             clientId: p.clientId, clientName: cl.name || "",
@@ -5169,7 +5415,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
           // 定期請求/締日請求
           const div = divisions?.find(d => d.id === p.divisionId);
           const co = div ? { ...company, ...Object.fromEntries(Object.entries(div).filter(([,v]) => v)) } : company;
-          await fetch("/api/send-invoice", {
+          const sendRes = await fetch("/api/send-invoice", {
             method: "POST", headers: await authHeaders(),
             body: JSON.stringify({
               to: emails,
@@ -5185,6 +5431,9 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
               </div>`,
             }),
           });
+          // 送れたことを確かめてから「送信済み」を記録する。確かめないと、送れていないのに
+          // 送信履歴・送信済み表示が付き、承認待ちからも消えて誰も気づけない（KY-006）
+          if (!sendRes.ok) throw new Error(`メールを送信できませんでした（${sendRes.status}）。承認待ちに残してあるので、もう一度お試しください`);
           await addDoc(collection(db, "sendHistory"), {
             docNo: p.invoiceDocNo, invoiceId: p.invoiceId,
             clientId: p.clientId, clientName: cl.name || "",
@@ -5495,7 +5744,19 @@ function SettingsPage({ company, setCompany, isAdmin, currentUser }) {
               カラーミー開発者設定の「リダイレクトURL」に以下を登録してください：<br/><code style={{background:"#fff",padding:"2px 6px",borderRadius:3,userSelect:"all"}}>{location.origin}/api/colorme-callback</code><br/>※ Client ID・Client Secretを入力し、<b>保存してから</b>認証ボタンを押してください
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center",marginTop:8}}>
-              <button style={{...s.btn("primary"),background:"#E95295",fontSize:12}} onClick={()=>{if(!form.colormeClientId){alert("Client IDとClient Secretを入力し、保存してから認証ボタンを押してください");return;}window.open(`https://api.shop-pro.jp/oauth/authorize?client_id=${form.colormeClientId}&redirect_uri=${encodeURIComponent(location.origin+"/api/colorme-callback")}&response_type=code&scope=read_sales`,"_blank","width=600,height=700")}}>カラーミー認証</button>
+              <button style={{...s.btn("primary"),background:"#E95295",fontSize:12}} onClick={async()=>{if(!form.colormeClientId){alert("Client IDとClient Secretを入力し、保存してから認証ボタンを押してください");return;}
+                // 戻り先（/api/colorme-callback）はだれでも呼べるので、この画面から始めた認証だけを受け付けるための
+                // 使い捨ての合言葉を settings に置き、認証画面に state として渡す（戻り先で照合して消す）
+                const w=window.open("","_blank","width=600,height=700");
+                try{
+                  const st=crypto.randomUUID();
+                  const existing=await getDocs(collection(db,"settings"));
+                  if(existing.empty){w&&w.close();alert("先に設定を保存してから認証ボタンを押してください");return;}
+                  await updateDoc(doc(db,"settings",existing.docs[0].id),{colormeOAuthState:st,colormeOAuthStateAt:serverTimestamp()});
+                  const url=`https://api.shop-pro.jp/oauth/authorize?client_id=${form.colormeClientId}&redirect_uri=${encodeURIComponent(location.origin+"/api/colorme-callback")}&response_type=code&scope=read_sales&state=${st}`;
+                  if(w)w.location.href=url;else window.open(url,"_blank","width=600,height=700");
+                }catch(e){w&&w.close();alert("認証を始められませんでした: "+e.message);}
+              }}>カラーミー認証</button>
               {form.colormeAccessToken && <span style={{fontSize:12,color:C.green}}>認証済み</span>}
             </div>
             <button style={{...s.btn("light"),marginTop:8,fontSize:12}} onClick={() => { if(confirm("カラーミーの過去1年分を取得します。"))runInitialSync("colorme"); }} disabled={syncing}>{syncMsg && syncMsg.includes("カラーミー") ? syncMsg : "カラーミー 初期同期（過去1年）"}</button>

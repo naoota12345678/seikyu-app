@@ -7,11 +7,14 @@ if (!getApps().length) {
 }
 const db = getFirestore();
 
+// URL や外部の応答をそのまま HTML に差し込むと、細工したリンクを踏ませてこの画面でスクリプトを動かせる
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+
 export default async function handler(req, res) {
-  const { code, error } = req.query;
+  const { code, error, state } = req.query;
 
   if (error) {
-    return res.status(400).send(`<html><body><h2>認証エラー</h2><p>${error}</p><script>setTimeout(()=>window.close(),3000)</script></body></html>`);
+    return res.status(400).send(`<html><body><h2>認証エラー</h2><p>${esc(error)}</p><script>setTimeout(()=>window.close(),3000)</script></body></html>`);
   }
 
   if (!code) {
@@ -25,6 +28,14 @@ export default async function handler(req, res) {
       return res.status(400).send(`<html><body><h2>設定が見つかりません</h2><script>setTimeout(()=>window.close(),3000)</script></body></html>`);
     }
     const settings = settingsSnap.docs[0].data();
+    // この画面（設定→カラーミー認証）から始めた認証だけを受け付ける。照合しないと、他人が自分の店の
+    // 認証コードでここを呼ぶだけで、売上の取り込み先を他人の店に差し替えられる。合言葉は1回で消す（30分で失効）
+    const expected = settings.colormeOAuthState || "";
+    const issuedAt = settings.colormeOAuthStateAt?.toMillis ? settings.colormeOAuthStateAt.toMillis() : 0;
+    if (!expected || state !== expected || Date.now() - issuedAt > 30 * 60 * 1000) {
+      return res.status(400).send(`<html><body><h2>認証をやり直してください</h2><p>設定画面の「カラーミー認証」ボタンから始めてください。</p><script>setTimeout(()=>window.close(),5000)</script></body></html>`);
+    }
+    await settingsSnap.docs[0].ref.update({ colormeOAuthState: FieldValue.delete(), colormeOAuthStateAt: FieldValue.delete() });
     const clientId = (settings.colormeClientId || "").trim();
     const clientSecret = (settings.colormeClientSecret || "").trim();
     if (!clientId || !clientSecret) {
@@ -48,7 +59,7 @@ export default async function handler(req, res) {
     const tokenData = await tokenRes.json();
 
     if (!tokenRes.ok || !tokenData.access_token) {
-      return res.status(400).send(`<html><body><h2>トークン取得失敗</h2><p>${JSON.stringify(tokenData)}</p><script>setTimeout(()=>window.close(),5000)</script></body></html>`);
+      return res.status(400).send(`<html><body><h2>トークン取得失敗</h2><p>${esc(JSON.stringify(tokenData))}</p><script>setTimeout(()=>window.close(),5000)</script></body></html>`);
     }
 
     // Firestoreのsettingsにアクセストークンを保存
@@ -71,6 +82,6 @@ export default async function handler(req, res) {
       </html>
     `);
   } catch (e) {
-    return res.status(500).send(`<html><body><h2>エラー</h2><p>${e.message}</p><script>setTimeout(()=>window.close(),5000)</script></body></html>`);
+    return res.status(500).send(`<html><body><h2>エラー</h2><p>${esc(e.message)}</p><script>setTimeout(()=>window.close(),5000)</script></body></html>`);
   }
 }
