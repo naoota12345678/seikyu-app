@@ -33,6 +33,9 @@ const YM = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
 const D = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-05`;
 const NO = (n) => `NO-${YM}-${String(n).padStart(3, "0")}`;
 const INV = (n) => `INV-${YM}-${String(n).padStart(3, "0")}`;
+// 今月の番号の流れ（[D] の発行し直し）に影響させないため、[F] の請求書は前月の番号にする
+const pm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+const PINV = (n) => `INV-${pm.getFullYear()}${String(pm.getMonth() + 1).padStart(2, "0")}-${String(n).padStart(3, "0")}`;
 
 let passed = 0, failed = 0;
 const ok = (name, cond, extra = "") => {
@@ -93,6 +96,16 @@ async function seed() {
   // 今月最後の番号の請求書 I5（消して発行し直したとき、同じ番号を付けないこと）
   await del("D7", NO(6), "C2", "invoiced", "I5", 50000);
   await inv("I5", INV(5), "C2", [NO(6)], 50000);
+  // [F] 黒崎の再現形: 未請求の納品書（invoiceId なし）と、別の取引先の請求済の納品書が同じ番号
+  await del("D8", NO(10), "C1", "unissued", null, 7000);
+  await del("D9", NO(10), "C2", "invoiced", "I6", 20000);
+  await inv("I6", PINV(1), "C2", [NO(10)], 20000);
+  await del("D10", NO(11), "C1", "unissued", null, 3000);
+  await del("D11", NO(11), "C2", "invoiced", "I7", 40000);
+  await inv("I7", PINV(2), "C2", [NO(11)], 40000);
+  // invoiceId を刻む前の古いデータ（請求済・invoiceId なし）は、同じ取引先なら今までどおり番号でつながる
+  await del("D12", NO(12), "C1", "invoiced", null, 9000);
+  await inv("I8", PINV(3), "C1", [NO(12)], 9000);
 }
 
 const dialogs = [];
@@ -180,6 +193,32 @@ const settle = (page) => page.waitForTimeout(2000);
   ok("C3 の売掛が 44,000 減る・期首残高は残る", b3.currentBalance === 100000 - 44000 && b3.openingBalance === 10000, JSON.stringify(b3));
   ok("ほかの取引先の請求書 I2・I3 は残る", !!(await get("invoices", "I2")) && !!(await get("invoices", "I3")));
   ok(`INV の使用済みは ${INV(6)} まで`, (await get("counters", `INV-${YM}`))?.last === 6, JSON.stringify(await get("counters", `INV-${YM}`)));
+
+  // ---------- F. 番号が同じ他社の請求書を巻き込まない（黒崎の差し戻し 指摘1）
+  console.log("\n[F] 未請求の納品書と、他社の請求済の納品書が同じ番号");
+  await nav(page, "📦 納品書一覧");
+  let c1 = (await bal("C1")).currentBalance, c2 = (await bal("C2")).currentBalance;
+  await row(page, NO(11), "テスト商事").getByRole("button", { name: "編集", exact: true }).click();
+  await page.waitForTimeout(800);
+  await page.getByRole("button", { name: "更新", exact: true }).first().click();
+  await settle(page);
+  const i7 = await get("invoices", "I7");
+  ok("未請求の納品書を保存しても、他社の請求書 I7 の金額は変わらない", i7?.total === 44000, JSON.stringify(i7?.total));
+  ok("他社の請求書 I7 の明細も変わらない", i7?.items?.[0]?.price === 40000, JSON.stringify(i7?.items?.[0]?.price));
+  ok("C1・C2 の売掛は変わらない", (await bal("C1")).currentBalance === c1 && (await bal("C2")).currentBalance === c2);
+
+  await row(page, NO(10), "テスト商事").getByRole("button", { name: "削除", exact: true }).click();
+  await settle(page);
+  ok("未請求の納品書 D8 は消える", !(await get("deliveries", "D8")));
+  ok("他社の請求書 I6 は残る", !!(await get("invoices", "I6")));
+  ok("他社の納品書 D9 は請求済のまま", (await get("deliveries", "D9"))?.status === "invoiced");
+  ok("C2 の売掛は変わらない", (await bal("C2")).currentBalance === c2, JSON.stringify((await bal("C2")).currentBalance));
+  ok("削除の確認に他社の請求書の番号が出ない", !dialogs.some(m => m.includes(PINV(1))));
+
+  await row(page, NO(12)).getByRole("button", { name: "削除", exact: true }).click();
+  await settle(page);
+  ok("古いデータ（invoiceId なし・同じ取引先）は番号でつながり、請求書 I8 も消える", !(await get("invoices", "I8")));
+  ok("C1 の売掛が I8 の分（9,900）減る", (await bal("C1")).currentBalance === c1 - 9900, JSON.stringify((await bal("C1")).currentBalance));
 
   ok("画面のエラー（pageerror）がゼロ", pageErrors.length === 0, JSON.stringify(pageErrors));
   const failAlerts = dialogs.filter(m => /失敗|エラー/.test(m));

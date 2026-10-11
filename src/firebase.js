@@ -20,8 +20,9 @@ export const auth = getAuth(app);
 
 // 検証用のローカル接続先。顧客の本番Firestore(sizukaproduct)を触らずに
 // 削除・残高まわりを実際に動かして確かめるために使う。
-//   npm run emu   … エミュレータ起動＋テストデータ投入
-//   npm run dev:emu … このアプリをエミュレータに繋いで起動
+//   npm run emu      … Firestore/Auth エミュレータ起動
+//   npm run dev:emu  … このアプリをエミュレータに繋いで起動（http://localhost:5173）
+//   npm run test:e2e … お金まわりの画面操作の検査（scripts/e2e-money-emulator.mjs）
 // `npm run dev` / `npm run build` では VITE_USE_EMULATOR が無いので本番に繋がる（従来どおり）。
 if (import.meta.env.DEV && import.meta.env.VITE_USE_EMULATOR === "1") {
   connectFirestoreEmulator(db, "127.0.0.1", 8080);

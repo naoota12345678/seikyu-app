@@ -147,16 +147,26 @@ async function rememberUsedDocNos(docNos) {
 }
 
 // 納品書にひも付く請求書。発行時に刻んだ invoiceId があればそれだけで引く。
-// 伝票番号で引くと、番号が重複しているとき別の取引先の請求書まで消したり書き換えたりする
+// 伝票番号で引くと、番号が重複しているとき別の取引先の請求書まで消したり書き換えたりする。
+// invoiceId の無い古いデータだけ番号で引くが、そのときも「請求済の納品書」と「同じ取引先の請求書」に限る
+// （未請求の納品書は請求書を持たない。番号が同じ他社の請求書を拾わない）
 function linkedInvoicesOf(d, invoices) {
   if (!d) return [];
   if (d.invoiceId) return invoices.filter(i => i.id === d.invoiceId);
-  return d.docNo ? invoices.filter(i => i.deliveryRef === d.docNo || (i.deliveryRefs || []).includes(d.docNo)) : [];
+  if (!d.docNo || d.status !== "invoiced") return [];
+  return invoices.filter(i => i.clientId === d.clientId && (i.deliveryRef === d.docNo || (i.deliveryRefs || []).includes(d.docNo)));
 }
 // 請求書にひも付く納品書（linkedInvoicesOf の逆向き。同じ規則で引く）
 function linkedDeliveriesOf(inv, deliveries) {
   return deliveries.filter(d => d.invoiceId ? d.invoiceId === inv.id
-    : (inv.deliveryRef === d.docNo || (inv.deliveryRefs || []).includes(d.docNo)));
+    : (d.status === "invoiced" && d.clientId === inv.clientId
+      && (inv.deliveryRef === d.docNo || (inv.deliveryRefs || []).includes(d.docNo))));
+}
+// 請求書の deliveryRefs の1件（伝票番号）に当たる納品書。印刷・明細書の日付と備考に使う。
+// 番号が重複していても他社の納品書を拾わないよう、この請求書にひも付くもの→同じ取引先のものの順で探す
+function deliveryForRef(inv, ref, deliveries) {
+  const list = (deliveries || []).filter(d => d.docNo === ref);
+  return list.find(d => d.invoiceId === inv.id) || list.find(d => d.clientId === inv.clientId) || null;
 }
 
 // 請求書を消すときの売掛の戻し（発行時に足した「差引請求額」を引く）。引かないと売掛残高が過大なまま残る。
@@ -570,7 +580,7 @@ function meisaiDetailHTML(inv, deliveries, summary) {
 
   // 納品グループ（納品日で日付順ソート）
   const delGroups = refs.map((ref, ri) => {
-    const del = (deliveries || []).find(d => d.docNo === ref);
+    const del = deliveryForRef(inv, ref, deliveries);
     return { kind: "delivery", date: del?.date || "", ref, items: (refItems[ri] && refItems[ri].length ? refItems[ri] : del?.items) || [], notes: del?.notes || "" };
   });
   // 期間中の入金（サマリーから）
@@ -706,21 +716,23 @@ function PrintModeModal({ invoice, delivery, clients, company, balances, divisio
       if (id === "pdf-invoice") {
         type = "請求書";
         result = await generatePDF(buildInvoiceHTML(invoice, clients, co, bal, meisaiOpts), `請求書_${safeName}_${docNo}.pdf`);
-        storagePath = `pdfs/invoices/${docNo}.pdf`;
+        storagePath = `pdfs/invoices/${docNo}_${invoice.id}.pdf`;
       } else if (id === "pdf-delivery") {
         type = "納品書";
         result = await generatePDF(buildDeliveryHTML(delivery, clients, co), `納品書_${safeName}_${delivery.docNo}.pdf`);
-        storagePath = `pdfs/deliveries/${delivery.docNo}.pdf`;
+        storagePath = `pdfs/deliveries/${delivery.docNo}_${delivery.id}.pdf`;
       } else if (id === "pdf-meisai") {
         type = "請求明細書";
         result = await generatePDF(buildMeisaiHTML(invoice, clients, co, bal, meisaiOpts), `請求明細書_${safeName}_${docNo}.pdf`);
-        storagePath = `pdfs/meisai/${docNo}.pdf`;
+        storagePath = `pdfs/meisai/${docNo}_${invoice.id}.pdf`;
       }
       if (result) {
         if (download) result.pdf.save(result.filename);
         const url = await savePDFToStorage(result.blob, storagePath);
         await addDoc(collection(db, "pdfHistory"), {
           type, docNo: invoice?.docNo || delivery?.docNo,
+          // 再送でPDFを探すときの手がかり（番号は重複しうるので書類のIDで探す）
+          ...(type === "納品書" ? { deliveryId: delivery.id } : { invoiceId: invoice.id }),
           clientId: docData.clientId, clientName: cl.name || "",
           filename: result.filename, storageUrl: url, storagePath,
           createdAt: serverTimestamp(),
@@ -1214,7 +1226,7 @@ function QuotationsList({ clients, quotations, products, deliveries, company, cl
       const result = await generatePDF(buildQuotationHTML(q, clients, co), `見積書_${safeName}_${q.docNo}.pdf`);
       if (result) {
         result.pdf.save(result.filename);
-        const storagePath = `pdfs/quotations/${q.docNo}.pdf`;
+        const storagePath = `pdfs/quotations/${q.docNo}_${q.id}.pdf`;
         const url = await savePDFToStorage(result.blob, storagePath);
         await addDoc(collection(db, "pdfHistory"), {
           type: "見積書", docNo: q.docNo, clientId: q.clientId, clientName: cl.name || "",
@@ -1706,7 +1718,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
                     <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                       <button style={{ ...s.btn("light"), padding: "4px 8px", fontSize: 12 }} onClick={() => { setEditing(d); setShowForm(true); }}>編集</button>
                       <button style={{ ...s.btn("light"), padding: "4px 8px", fontSize: 12 }} onClick={() => { const { id, docNo, status, invoiceId, createdAt, updatedAt, subtotal, tax, total, ...rest } = d; setEditing({ ...rest, date: today() }); setShowForm(true); }}>コピー</button>
-                      <button style={{ ...s.btn("light"), padding: "4px 8px", fontSize: 12 }} onClick={() => setPrintTarget({ delivery: d, invoice: invoices.find(i => i.deliveryRef === d.docNo) })}>🖨 印刷</button>
+                      <button style={{ ...s.btn("light"), padding: "4px 8px", fontSize: 12 }} onClick={() => setPrintTarget({ delivery: d, invoice: linkedInvoicesOf(d, invoices)[0] })}>🖨 印刷</button>
                       {d.status === "unissued" && client?.billingType !== "closing" && client?.billingType !== "monthly" && (
                         <button style={{ ...s.btn("gold"), padding: "4px 8px", fontSize: 12 }} onClick={() => issueInvoice(d)}>請求書発行</button>
                       )}
@@ -1762,10 +1774,10 @@ function SendRecordModal({ invoice, clients, company, divisions, balances, invoi
       // StorageにPDF保存してダウンロードURL取得
       let pdfUrl = "";
       try {
-        const storagePath = `pdfs/invoices/${invoice.docNo}.pdf`;
+        const storagePath = `pdfs/invoices/${invoice.docNo}_${invoice.id}.pdf`;
         pdfUrl = await savePDFToStorage(blob, storagePath);
         await addDoc(collection(db, "pdfHistory"), {
-          type: "請求書", docNo: invoice.docNo,
+          type: "請求書", docNo: invoice.docNo, invoiceId: invoice.id,
           clientId: invoice.clientId, clientName: cl.name || "",
           filename, storageUrl: pdfUrl, storagePath, createdAt: serverTimestamp(),
         });
@@ -1907,7 +1919,10 @@ function ResendModal({ invoice, clients, company, divisions, balances, invoices 
       let pdfUrl = "";
       try {
         const pdfSnap = await getDocs(query(collection(db, "pdfHistory"), orderBy("createdAt", "desc")));
-        const pdfDoc = pdfSnap.docs.find(d => d.data().docNo === invoice.docNo);
+        // 番号が重複していると他社の請求書PDFを送ってしまうので、この請求書のIDで探す。
+        // IDを記録していない古い履歴は、同じ取引先・同じ番号の「請求書」に限る
+        const pdfDoc = pdfSnap.docs.find(d => d.data().invoiceId === invoice.id)
+          || pdfSnap.docs.find(d => { const h = d.data(); return !h.invoiceId && h.type === "請求書" && h.docNo === invoice.docNo && h.clientId === invoice.clientId; });
         if (pdfDoc) pdfUrl = pdfDoc.data().storageUrl || "";
       } catch (e) { console.warn("PDF URL取得スキップ:", e.message); }
       // PDFがなければ生成して保存
@@ -1917,7 +1932,7 @@ function ResendModal({ invoice, clients, company, divisions, balances, invoices 
           const invoiceHTML = buildInvoiceHTML(invoice, [cl], co, rBal, summaryOpts);
           const safeName = (cl.name||"").replace(/[\\/:*?"<>|]/g,"_");
           const { blob, filename } = await generatePDF(invoiceHTML, `請求書_${safeName}_${invoice.docNo}.pdf`);
-          const storagePath = `pdfs/invoices/${invoice.docNo}.pdf`;
+          const storagePath = `pdfs/invoices/${invoice.docNo}_${invoice.id}.pdf`;
           pdfUrl = await savePDFToStorage(blob, storagePath);
         } catch (e) { console.warn("PDF生成スキップ:", e.message); }
       }
@@ -2217,7 +2232,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
               const client = clients.find(c => c.id === inv.clientId);
               const bal = balances[inv.clientId] || {};
               const overdue = inv.status === "unpaid" && inv.dueDate && inv.dueDate < today();
-              const delivery = deliveries.find(d => d.docNo === inv.deliveryRef);
+              const delivery = inv.deliveryRef ? deliveryForRef(inv, inv.deliveryRef, deliveries) : null;
               const isClosing = inv.billingType === "closing" && inv.deliveryRefs?.length > 0;
               const isExpanded = expandedInv === inv.id;
               return (
@@ -2281,7 +2296,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
                 {isClosing && isExpanded && (() => {
                   const refItems = typeof inv.deliveryRefItems === "string" ? JSON.parse(inv.deliveryRefItems) : (inv.deliveryRefItems || []);
                   return inv.deliveryRefs.map((ref, ri) => {
-                    const del = deliveries.find(d => d.docNo === ref);
+                    const del = deliveryForRef(inv, ref, deliveries);
                     const items = refItems[ri] || del?.items || [];
                     const { total: delTotal } = totalFromItems(items);
                     return (
@@ -2341,7 +2356,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
               {inv.deliveryRefs?.length > 0 && <div style={{ fontSize: 12, color: C.gray, marginTop: 12 }}>対象納品書：{inv.deliveryRefs.join("、")}</div>}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
                 <button style={s.btn("light")} onClick={() => setPreviewTarget(null)}>閉じる</button>
-                <button style={s.btn("primary")} onClick={() => { setPreviewTarget(null); setPrintTarget({ invoice: inv, delivery: deliveries.find(d => d.docNo === inv.deliveryRef) }); }}>🖨 印刷・PDF</button>
+                <button style={s.btn("primary")} onClick={() => { setPreviewTarget(null); setPrintTarget({ invoice: inv, delivery: inv.deliveryRef ? deliveryForRef(inv, inv.deliveryRef, deliveries) : null }); }}>🖨 印刷・PDF</button>
               </div>
             </div>
           </div>
@@ -6081,7 +6096,7 @@ export default function App() {
       let fixed = 0;
       for (const inv of targets) {
         try {
-          const dates = deliveries.filter(d => (inv.deliveryRefs || []).includes(d.docNo)).map(d => d.date).filter(Boolean).sort();
+          const dates = (inv.deliveryRefs || []).map(ref => deliveryForRef(inv, ref, deliveries)?.date).filter(Boolean).sort();
           if (!dates.length) continue;
           const minD = dates[0], maxD = dates[dates.length - 1];
           const cd = (inv.closingDay !== undefined && inv.closingDay !== null) ? Number(inv.closingDay) : 0;

@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "emu": "npx -y firebase-tools@15.26.0 emulators:start --only firestore,auth --project sizukaproduct",
+    "dev:emu": "vite --mode emulator --port 5173 --strictPort",
+    "test:e2e": "node scripts/e2e-money-emulator.mjs"
   },
   "dependencies": {
     "firebase": "^12.10.0",
