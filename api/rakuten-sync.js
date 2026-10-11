@@ -1,5 +1,6 @@
 import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { authorizeSyncRequest } from "../lib/apiAuth.js";
 
 if (!getApps().length) {
   const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || "{}");
@@ -167,12 +168,10 @@ function splitDateRange(startDate, endDate) {
 }
 
 export default async function handler(req, res) {
-  // cron（GET）は CRON_SECRET で認証
-  if (req.method === "GET") {
-    const authHeader = req.headers.authorization;
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
+  // cron（GET）は CRON_SECRET、画面（POST）はログイン中ユーザーのIDトークンで認証
+  const authz = await authorizeSyncRequest(req);
+  if (!authz.ok) {
+    return res.status(authz.status).json({ ok: false, error: authz.error });
   }
 
   try {

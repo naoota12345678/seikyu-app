@@ -10,6 +10,14 @@ import html2canvas from "html2canvas";
 import { ref, uploadBytes, getDownloadURL, listAll } from "firebase/storage";
 import ManualPage from "./ManualPage";
 
+// サーバーAPI（メール送信・ユーザー管理・EC同期）に付けるログインの証明。
+// サーバーは IDトークンで呼び出し元を確かめる。付けないと 401 で断られる
+// （以前は無認証で、URLを知っているだけで誰でもメール送信・ユーザー作成・同期ができた）
+const authHeaders = async () => {
+  const token = await auth.currentUser?.getIdToken();
+  return { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+};
+
 const C = {
   navy: "#1C2B4A", gold: "#B8905A", cream: "#F4F1EC",
   pale: "#F7EEE0", green: "#2D6A4F", red: "#C53030",
@@ -909,7 +917,7 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
           }
           try {
             const res = await fetch("/api/send-invoice", {
-              method: "POST", headers: { "Content-Type": "application/json" },
+              method: "POST", headers: await authHeaders(),
               body: JSON.stringify({
                 to: emails,
                 subject: `【請求書】${inv.docNo} ${coInfo.name || ""}`,
@@ -1492,7 +1500,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
           if (div) coInfo = { ...coInfo, ...Object.fromEntries(Object.entries(div).filter(([,v]) => v)) };
         }
         const res = await fetch("/api/send-invoice", {
-          method: "POST", headers: { "Content-Type": "application/json" },
+          method: "POST", headers: await authHeaders(),
           body: JSON.stringify({
             to: getEmails(cl),
             subject: `【請求書】${inv.docNo} ${coInfo.name || ""}`,
@@ -1635,7 +1643,7 @@ function SendRecordModal({ invoice, clients, company, divisions, balances, invoi
       const pdfLink = pdfUrl ? `<p style="margin:20px 0"><a href="${pdfUrl}" style="display:inline-block;padding:12px 24px;background:#1C2B4A;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold">📄 請求書PDFをダウンロード</a></p>` : "";
       const res = await fetch("/api/send-invoice", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify({
           to: email,
           subject: `【請求書】${invoice.docNo} ${co.name || ""}`,
@@ -1796,7 +1804,7 @@ function ResendModal({ invoice, clients, company, divisions, balances, invoices 
       } else {
         const res = await fetch("/api/send-invoice", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: await authHeaders(),
           body: JSON.stringify({
             to: getEmails(cl),
             subject: `【再送】請求書 ${invoice.docNo} ${co.name || ""}`,
@@ -2135,7 +2143,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
               if (!confirm(`${cl.name}（${getEmailStr(cl)}）にお支払いのお願いメールを送信します。`)) { setEmailSending(false); return; }
               const htmlBody = msg.replace(/\n/g, "<br/>");
               const res = await fetch("/api/send-invoice", {
-                method: "POST", headers: { "Content-Type": "application/json" },
+                method: "POST", headers: await authHeaders(),
                 body: JSON.stringify({ to: getEmails(cl), subject: `【お支払いのお願い】${inv.docNo}`, html: htmlBody }),
               });
               const data = await res.json();
@@ -2825,7 +2833,7 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
           setSyncMsg(`${mo.label} を同期中... (${i + 1}/${months.length})`);
           const res = await fetch("/api/rakuten-sync", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: await authHeaders(),
             body: JSON.stringify({ mode: "range", start: mo.start, end: mo.end }),
           });
           const data = await res.json();
@@ -2839,7 +2847,7 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
       } else {
         const res = await fetch("/api/rakuten-sync", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: await authHeaders(),
           body: JSON.stringify({ mode: "today" }),
         });
         const data = await res.json();
@@ -2881,7 +2889,7 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
           try {
             const res = await fetch("/api/colorme-sync", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: await authHeaders(),
               body: JSON.stringify({ mode: "range", start: mo.start, end: mo.end }),
             });
             const data = await res.json();
@@ -2895,7 +2903,7 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
       } else {
         const res = await fetch("/api/colorme-sync", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: await authHeaders(),
           body: JSON.stringify({ mode: "today" }),
         });
         const data = await res.json();
@@ -2937,7 +2945,7 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
           try {
             const res = await fetch("/api/amazon-sync", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: await authHeaders(),
               body: JSON.stringify({ mode: "range", start: mo.start, end: mo.end }),
             });
             const data = await res.json();
@@ -2969,7 +2977,7 @@ function SalesPage({ clients, invoices, divisions, externalSales, historicalSale
       } else {
         const res = await fetch("/api/amazon-sync", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: await authHeaders(),
           body: JSON.stringify({ mode: "today" }),
         });
         const data = await res.json();
@@ -3754,7 +3762,7 @@ function BalancePage({ clients, invoices, balances, company, paymentHistory, ini
               const htmlBody = msg.replace(/\n/g, "<br/>");
               const res = await fetch("/api/send-invoice", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: await authHeaders(),
                 body: JSON.stringify({
                   to: getEmails(cl),
                   subject: `【お支払いのお願い】${docNos}`,
@@ -5061,7 +5069,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
           }
           const res = await fetch("/api/send-invoice", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: await authHeaders(),
             body: JSON.stringify({
               to: emails,
               subject: `【請求書】${inv.docNo} ${coInfo.name || ""}`,
@@ -5141,7 +5149,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
           const msgHtml = (p.message || `${cl.name} ${cl.honorific || "御中"}\n\nお支払い期日を過ぎておりますのでご確認をお願いいたします。\n\n対象: ${p.invoiceDocNo}\n金額: ¥${fmt(p.total)}`).replace(/\n/g, "<br/>");
           const htmlBody = msgHtml + pdfLink;
           await fetch("/api/send-invoice", {
-            method: "POST", headers: { "Content-Type": "application/json" },
+            method: "POST", headers: await authHeaders(),
             body: JSON.stringify({ to: emails, subject: `【お支払いのお願い】${p.invoiceDocNo}`, html: htmlBody }),
           });
           await addDoc(collection(db, "sendHistory"), {
@@ -5156,7 +5164,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
           const div = divisions?.find(d => d.id === p.divisionId);
           const co = div ? { ...company, ...Object.fromEntries(Object.entries(div).filter(([,v]) => v)) } : company;
           await fetch("/api/send-invoice", {
-            method: "POST", headers: { "Content-Type": "application/json" },
+            method: "POST", headers: await authHeaders(),
             body: JSON.stringify({
               to: emails,
               subject: `【請求書】${p.invoiceDocNo} ${co.name || ""}`,
@@ -5367,7 +5375,7 @@ function SettingsPage({ company, setCompany, isAdmin, currentUser }) {
         const mo = months[i];
         setSyncMsg(`${label} ${mo.label} を同期中... (${i + 1}/${months.length})`);
         try {
-          const res = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "range", start: mo.start, end: mo.end }) });
+          const res = await fetch(endpoint, { method: "POST", headers: await authHeaders(), body: JSON.stringify({ mode: "range", start: mo.start, end: mo.end }) });
           const data = await res.json();
           if (data.ok) { totalOrders += data.totalOrders || 0; totalDays += data.totalDays || 0; errorCount = 0; }
           else { errorCount++; if (errorCount >= 3) { alert(`${label}同期エラーが連続しました。中断します。\nエラー: ${data.error || data.message || "不明"}`); break; } }
@@ -5548,7 +5556,7 @@ function UserManagement({ currentUser }) {
 
   const load = async () => {
     try {
-      const res = await fetch("/api/manage-user", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "list", callerUid: currentUser.uid }) });
+      const res = await fetch("/api/manage-user", { method: "POST", headers: await authHeaders(), body: JSON.stringify({ action: "list" }) });
       const data = await res.json();
       if (data.success) setUsers(data.users);
     } catch (e) { console.error(e); }
@@ -5560,7 +5568,7 @@ function UserManagement({ currentUser }) {
     if (newPass.length < 6) { alert("パスワードは6文字以上にしてください"); return; }
     setLoading(true); setMsg("");
     try {
-      const res = await fetch("/api/manage-user", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "create", email: newEmail, password: newPass, displayName: newName, role: newRole, callerUid: currentUser.uid }) });
+      const res = await fetch("/api/manage-user", { method: "POST", headers: await authHeaders(), body: JSON.stringify({ action: "create", email: newEmail, password: newPass, displayName: newName, role: newRole }) });
       const data = await res.json();
       if (data.success) { setMsg("ユーザーを追加しました"); setNewEmail(""); setNewPass(""); setNewName(""); setNewRole("staff"); load(); }
       else setMsg("エラー: " + (data.error || "不明"));
@@ -5571,7 +5579,7 @@ function UserManagement({ currentUser }) {
   const delUser = async (uid) => {
     if (!confirm("このユーザーを削除しますか？")) return;
     try {
-      const res = await fetch("/api/manage-user", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "delete", uid, callerUid: currentUser.uid }) });
+      const res = await fetch("/api/manage-user", { method: "POST", headers: await authHeaders(), body: JSON.stringify({ action: "delete", uid }) });
       const data = await res.json();
       if (data.success) load();
       else alert("エラー: " + (data.error || "不明"));
@@ -5580,7 +5588,7 @@ function UserManagement({ currentUser }) {
 
   const changeRole = async (uid, role) => {
     try {
-      const res = await fetch("/api/manage-user", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "updateRole", uid, role, callerUid: currentUser.uid }) });
+      const res = await fetch("/api/manage-user", { method: "POST", headers: await authHeaders(), body: JSON.stringify({ action: "updateRole", uid, role }) });
       const data = await res.json();
       if (data.success) load();
       else alert("エラー: " + (data.error || "不明"));
@@ -5713,7 +5721,7 @@ export default function App() {
       } else {
         // usersコレクションにまだ登録されていない → 初回セットアップ
         try {
-          const res = await fetch("/api/manage-user", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "init", callerUid: user.uid, email: user.email }) });
+          const res = await fetch("/api/manage-user", { method: "POST", headers: await authHeaders(), body: JSON.stringify({ action: "init", email: user.email }) });
           const data = await res.json();
           if (data.success && data.initialized) setUserRole("admin");
           else setUserRole("staff");

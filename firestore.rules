@@ -1,15 +1,31 @@
 rules_version = '2';
 
 // seikyu 本番Firestore アクセス制御
-// 方針: ログイン必須（認証済みユーザーのみ読み書き可）。
-//   - クライアント(ブラウザ)からのアクセスは Firebase Authentication のログインを要求する。
+// 方針: 事務所が登録したユーザー（users/{uid} がある人）だけが読み書きできる。
+//   - users は画面から書けない。作成・権限変更はサーバー（/api/manage-user、Admin SDK）だけ。
 //   - サーバ側の自動処理(cron-billing / *-sync / manage-user)は Admin SDK 経由のため
 //     このルールを迂回する(サービスアカウント権限)。よってサーバ処理には影響しない。
-// 背景: 2026-07-03、ルール未設定で誰でも無認証に読み書き可能だった状態を是正(KY-005)。
+// 背景:
+//   2026-07-03、ルール未設定で誰でも無認証に読み書き可能だった状態を「ログイン必須」に是正(KY-005)。
+//   2026-10-11、「ログイン必須」だけでは、アカウントを作れる人なら誰でも全データを読み書きでき、
+//   画面から users/{自分} を書いて管理者にもなれたため、「登録済みユーザーのみ」に強めた。
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+    function isMember() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    // ユーザー: 本人のドキュメントだけ読める（権限の表示に使う）。書き込みはサーバーのみ
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // その他すべて（請求書・取引先・納品書など）。users は上で扱うのでここから除く
+    // ※ ルールは複数マッチが OR 結合されるので、除かないと users の書き込み禁止が無効になる
+    match /{collectionId}/{document=**} {
+      allow read, write: if isMember() && collectionId != 'users';
     }
   }
 }

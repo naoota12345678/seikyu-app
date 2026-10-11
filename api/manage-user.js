@@ -1,6 +1,7 @@
 import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
+import { authorizeUser } from "../lib/apiAuth.js";
 
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || "{}");
 if (!getApps().length) {
@@ -14,10 +15,22 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { action, email, password, displayName, role, uid, callerUid } = req.body;
+  const { action, email, password, displayName, role, uid } = req.body;
 
-  // 呼び出し元がadminか確認（initは初回セットアップなのでスキップ）
-  if (callerUid && action !== "init") {
+  // 呼び出し元はIDトークンから特定する。
+  // 以前は body の callerUid を信用しており、callerUid を送らなければ
+  // 下のadmin判定ごと飛ばせた（＝誰でもユーザーの作成・削除・権限変更ができた）。
+  const authz = await authorizeUser(req);
+  if (!authz.ok) {
+    return res.status(authz.status).json({ error: authz.error });
+  }
+  const callerUid = authz.uid;
+
+  // init（初回セットアップ）だけは admin 判定を課さない。
+  // usersコレクションが空のときしか成立せず、その時点では誰もadminではないため、
+  // ここでadminを要求すると初期化も復旧も永久にできなくなる。
+  // 権限の要は init 側の「usersが空か」チェックが担う。
+  if (action !== "init") {
     const callerDoc = await adminDb.collection("users").doc(callerUid).get();
     if (!callerDoc.exists || callerDoc.data().role !== "admin") {
       return res.status(403).json({ error: "管理者権限が必要です" });
@@ -48,7 +61,7 @@ export default async function handler(req, res) {
       if (!uid) {
         return res.status(400).json({ error: "uidは必須です" });
       }
-      // 自分自身は削除不可
+      // 自分自身は削除不可（callerUidはIDトークン由来なので偽装できない）
       if (uid === callerUid) {
         return res.status(400).json({ error: "自分自身は削除できません" });
       }
@@ -71,7 +84,7 @@ export default async function handler(req, res) {
     } else if (action === "init") {
       // 初回セットアップ: usersコレクションが空なら呼び出し元をadminとして登録
       const snapshot = await adminDb.collection("users").get();
-      if (snapshot.empty && callerUid) {
+      if (snapshot.empty) {
         const authUser = await adminAuth.getUser(callerUid);
         await adminDb.collection("users").doc(callerUid).set({
           email: authUser.email || email || "",
