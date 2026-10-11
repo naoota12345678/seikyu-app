@@ -288,11 +288,12 @@ table{width:100%;border-collapse:collapse;margin:0 0 8px}
 .tr td{font-weight:bold;border:1px solid #999}
 .bb{margin-top:10px;font-size:11px;line-height:1.8}
 .pb{page-break-after:always}
-/* @page の余白を0にすると、ブラウザがヘッダー（about:blank・日付）とフッター（URL・ページ番号）を
-   刷る場所が無くなり、印刷されなくなる。お客様に渡す書類なので余計な文字を載せない。
-   用紙の余白は .sheet が持つ（従来のブラウザ既定余白 約10mm＋body余白 8mm 10mm と同じ寸法）。
+/* @page の上下余白を小さく(6mm)すると、ブラウザがヘッダー（about:blank・日付）とフッター（URL・ページ番号）を
+   刷る場所が無くなり、印刷されなくなる（Chrome/Edge 実測で 8mm 以下なら消え、9mm 以上だと出る）。
+   0 にしないのは、明細が2枚にまたがったときページの切れ目に余白を残すため（0 だと用紙の端まで刷られて行が欠ける）。
+   残りの余白は .sheet が持つ（従来のブラウザ既定余白 約10mm＋body余白 8mm 10mm と同じ寸法＝上18mm 左右20mm）。
    .np は改ページ直後の書類（納品書＋請求書の2枚目）に上余白をつけるためのもの */
-@media print{@page{margin:0}*{box-sizing:border-box}body{padding:0;width:100%;max-width:100%}.sheet{padding:18mm 20mm}.np{padding-top:18mm}table{table-layout:fixed;word-break:break-all}.kakuin{right:-10px!important}}`;
+@media print{@page{margin:6mm 0}*{box-sizing:border-box}body{padding:0;width:100%;max-width:100%}.sheet{padding:12mm 20mm}.np{padding-top:12mm}table{table-layout:fixed;word-break:break-all}.kakuin{right:-10px!important}}`;
 
 const DETAIL_ROWS = 18;
 
@@ -2584,7 +2585,7 @@ function SalesReportPage({ clients, invoices, externalSales, historicalSales = [
       h1{text-align:center;font-size:18px;margin:0 0 6px}
       .period{text-align:center;font-size:13px;color:#555;margin-bottom:20px}
       table{width:100%;border-collapse:collapse}
-      @media print{@page{margin:0}*{box-sizing:border-box}body{padding:20mm;width:100%;max-width:100%}table{table-layout:fixed;word-break:break-all}.kakuin{right:0px!important}}
+      @media print{@page{margin:6mm 0}*{box-sizing:border-box}body{padding:14mm 20mm;width:100%;max-width:100%}table{table-layout:fixed;word-break:break-all}.kakuin{right:0px!important}}
     </style></head><body>
       <h1>売上合計資料</h1>
       <div class="period">${periodLabel}</div>
