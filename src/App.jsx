@@ -5690,7 +5690,8 @@ function LoginPage({ onLogin }) {
 // 画面を開いたままにしていると、古い版が動き続ける（サーバーの仕様が変わると操作が失敗する）。
 // 10分ごとと、タブに戻ってきたときに index.html を読み直し、読み込んでいるプログラムのファイル名
 // （ビルドのたびに変わる /assets/index-xxxx.js）が違えば新しい版と判断する。
-// タブに戻ってきたときは入力の途中ではないので自動で読み込み直す。開いたままのときは帯で知らせる
+// 30分以上ほかのタブ・スリープにいたあと戻ってきたときだけ自動で読み込み直す（長い離席なら入力の途中ではない）。
+// 短い切り替え（入力中にメール等から金額をコピーして戻る）では読み込み直さず帯で知らせる。入力が消えるため
 const currentBundle = () => (document.querySelector('script[type="module"][src*="/assets/index-"]')?.getAttribute("src") || "");
 function UpdateBanner() {
   const [stale, setStale] = useState(false);
@@ -5705,10 +5706,16 @@ function UpdateBanner() {
         return !!latest && latest !== mine;
       } catch { return false; }
     };
+    const LONG_AWAY_MS = 30 * 60 * 1000;
+    let hiddenAt = document.visibilityState === "hidden" ? Date.now() : 0;
     const poll = async () => { if (alive && await isNewer()) setStale(true); };
     const onVisible = async () => {
-      if (document.visibilityState !== "visible") return;
-      if (await isNewer()) window.location.reload();
+      if (document.visibilityState === "hidden") { hiddenAt = Date.now(); return; }
+      const longAway = hiddenAt && Date.now() - hiddenAt >= LONG_AWAY_MS;
+      hiddenAt = 0;
+      if (!(await isNewer())) return;
+      if (longAway) window.location.reload();
+      else if (alive) setStale(true);
     };
     const timer = setInterval(poll, 10 * 60 * 1000);
     document.addEventListener("visibilitychange", onVisible);
