@@ -1,0 +1,19 @@
+rules_version = '2';
+
+// seikyu 本番 Storage アクセス制御（請求書・納品書・見積書などのPDF）
+// 方針: 事務所が登録したユーザー（Firestore の users/{uid} がある人）だけが読み書き・削除できる。
+// 背景: 2026-10-11 まで pdfs/ が `if true`（ログイン不要）で、置き場所の名前（pdfs/invoices/請求番号.pdf）を
+//   推測すれば誰でも顧客の請求書PDFを読めて、上書き・削除もできた。
+// お客様にメールで送ったPDFのリンクは getDownloadURL の「トークン付きURL」なので、このルールに関係なく開ける。
+// ※ Firestore を参照するので、初回の公開時に Firebase が Storage へ Firestore の読み取り権限を付けるよう求める（許可する）。
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isMember() {
+      return request.auth != null
+        && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid));
+    }
+    match /pdfs/{allPaths=**} {
+      allow read, write: if isMember();
+    }
+  }
+}
