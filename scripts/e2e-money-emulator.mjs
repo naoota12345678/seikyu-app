@@ -106,6 +106,28 @@ async function seed() {
   // invoiceId を刻む前の古いデータ（請求済・invoiceId なし）は、同じ取引先なら今までどおり番号でつながる
   await del("D12", NO(12), "C1", "invoiced", null, 9000);
   await inv("I8", PINV(3), "C1", [NO(12)], 9000);
+  // [G] 承認待ちからの発行（承認は G の始めに設定で有効にする）
+  await db.collection("clients").doc("C4").set(cl("二重押し商会"));
+  await db.collection("clients").doc("C5").set(cl("途中失敗工業"));
+  await db.collection("clientBalances").doc("C4").set(b("C4", 0, 1000));
+  await db.collection("clientBalances").doc("C5").set(b("C5", 0, 2000));
+  const pend = (id, clientId, deliveryId, docNo, price) => db.collection("pendingBillings").doc(id).set({
+    type: "invoice", clientId, clientName: "", divisionId: "", deliveryId, deliveryDocNo: docNo,
+    items: items(price), subtotal: price, tax: price / 10, total: price * 1.1, billingType: "immediate", notes: "",
+    status: "pending", createdAt: ts(),
+  });
+  await del("D13", NO(20), "C1", "pending_approval", null, 8000);
+  await pend("P1", "C1", "D13", NO(20), 8000);
+  // 途中で失敗する形: もとの納品書が消えている（承認待ちのあいだに削除された）
+  await pend("P2", "C5", "GONE", NO(21), 6000);
+  // 2人が同時に「承認・発行」を押す
+  await del("D14", NO(22), "C4", "pending_approval", null, 4000);
+  await pend("P3", "C4", "D14", NO(22), 4000);
+  // 却下
+  await del("D15", NO(23), "C3", "pending_approval", null, 2000);
+  await pend("P4", "C3", "D15", NO(23), 2000);
+  // 画面から承認待ちに入れる
+  await del("D16", NO(24), "C1", "unissued", null, 1000);
 }
 
 const dialogs = [];
@@ -220,8 +242,77 @@ const settle = (page) => page.waitForTimeout(2000);
   ok("古いデータ（invoiceId なし・同じ取引先）は番号でつながり、請求書 I8 も消える", !(await get("invoices", "I8")));
   ok("C1 の売掛が I8 の分（9,900）減る", (await bal("C1")).currentBalance === c1 - 9900, JSON.stringify((await bal("C1")).currentBalance));
 
+  // ---------- G. 承認待ちからの発行（途中で失敗しても、2人が同時に押しても、請求書が余計にできない）
+  console.log("\n[G] 承認待ちからの発行");
+  await db.collection("settings").doc("company").set({ approvalEnabled: true, invoiceApproval: true }, { merge: true });
+  await page.waitForTimeout(1500);
+  const invsOf = async (clientId) => (await db.collection("invoices").where("clientId", "==", clientId).get()).docs.map(d => ({ id: d.id, ...d.data() }));
+  const c1Before = (await bal("C1")).currentBalance;
+
+  await nav(page, "⏳ 承認待ち");
+  await row(page, "テスト商事").getByRole("button", { name: "承認・発行", exact: true }).click();
+  await settle(page);
+  const p1 = await get("pendingBillings", "P1");
+  const i1s = (await invsOf("C1")).filter(i => i.deliveryRef === NO(20));
+  ok("承認・発行で請求書が1通できる", i1s.length === 1, JSON.stringify(i1s.map(i => i.docNo)));
+  ok("承認待ちは承認済になり、請求書のIDを持つ", p1?.status === "approved" && p1?.invoiceId === i1s[0]?.id, JSON.stringify(p1?.status));
+  const d13 = await get("deliveries", "D13");
+  ok("納品書は請求済になり、請求書のIDを持つ", d13?.status === "invoiced" && d13?.invoiceId === i1s[0]?.id, JSON.stringify(d13?.status));
+  ok("売掛が 8,800 増える", (await bal("C1")).currentBalance === c1Before + 8800, JSON.stringify((await bal("C1")).currentBalance));
+  ok("期首残高が残る", (await bal("C1")).openingBalance === 50000);
+
+  console.log("  -- 途中で失敗する承認（もとの納品書が消えている）");
+  const nDialogs = dialogs.length;
+  await row(page, "途中失敗工業").getByRole("button", { name: "承認・発行", exact: true }).click();
+  await settle(page);
+  ok("請求書は1通もできない（旧: 請求書だけ残っていた）", (await invsOf("C5")).length === 0, JSON.stringify((await invsOf("C5")).map(i => i.docNo)));
+  ok("売掛は変わらない", (await bal("C5")).currentBalance === 2000, JSON.stringify((await bal("C5")).currentBalance));
+  ok("承認待ちに残る", (await get("pendingBillings", "P2"))?.status === "pending");
+  ok("発行していないことが画面に出る", dialogs.slice(nDialogs).some(m => m.includes("発行していません")), JSON.stringify(dialogs.slice(nDialogs)));
+  await row(page, "途中失敗工業").getByRole("button", { name: "承認・発行", exact: true }).click();
+  await settle(page);
+  ok("もう一度押しても請求書はできない", (await invsOf("C5")).length === 0);
+
+  console.log("  -- 2人が同時に「承認・発行」を押す");
+  // もう1人の担当者の代わりに、別のブラウザでログインする
+  const ctx2 = await browser.newContext();
+  const page2 = await ctx2.newPage();
+  page2.on("dialog", async d => { dialogs.push(d.message()); await d.accept(); });
+  page2.on("pageerror", e => pageErrors.push(e.message));
+  await page2.goto(APP);
+  await page2.waitForSelector('input[type="email"]', { timeout: 30000 });
+  await page2.fill('input[type="email"]', "test@example.com");
+  await page2.fill('input[type="password"]', "test1234");
+  await page2.click('button[type="submit"]');
+  await page2.waitForSelector('button:has-text("⏳ 承認待ち")', { timeout: 30000 });
+  await nav(page2, "⏳ 承認待ち");
+  const b4 = row(page, "二重押し商会").getByRole("button", { name: "承認・発行", exact: true });
+  const b4b = row(page2, "二重押し商会").getByRole("button", { name: "承認・発行", exact: true });
+  await b4.waitFor(); await b4b.waitFor();
+  await Promise.all([b4.click(), b4b.click()]);
+  await page.waitForTimeout(4000);
+  const i4s = await invsOf("C4");
+  ok("請求書は1通だけ（旧: 2通できうる）", i4s.length === 1, JSON.stringify(i4s.map(i => i.docNo)));
+  ok("売掛は1通分（4,400）だけ増える", (await bal("C4")).currentBalance === 1000 + 4400, JSON.stringify((await bal("C4")).currentBalance));
+  ok("納品書は1通目の請求書にひも付く", (await get("deliveries", "D14"))?.invoiceId === i4s[0]?.id);
+  await ctx2.close();
+
+  console.log("  -- 却下");
+  await row(page, "締め株式会社").getByRole("button", { name: "却下", exact: true }).click();
+  await settle(page);
+  ok("承認待ちは却下になる", (await get("pendingBillings", "P4"))?.status === "rejected");
+  ok("納品書は未請求に戻る", (await get("deliveries", "D15"))?.status === "unissued");
+
+  console.log("  -- 画面から承認待ちに入れる");
+  await nav(page, "📦 納品書一覧");
+  await row(page, NO(24)).getByRole("button", { name: "請求書発行", exact: true }).click();
+  await settle(page);
+  const newP = (await db.collection("pendingBillings").where("deliveryId", "==", "D16").get()).docs.map(d => d.data());
+  ok("承認待ちが1件でき、納品書は承認待ちになる", newP.length === 1 && newP[0].status === "pending" && (await get("deliveries", "D16"))?.status === "pending_approval",
+    JSON.stringify({ n: newP.length, d: (await get("deliveries", "D16"))?.status }));
+
   ok("画面のエラー（pageerror）がゼロ", pageErrors.length === 0, JSON.stringify(pageErrors));
-  const failAlerts = dialogs.filter(m => /失敗|エラー/.test(m));
+  const failAlerts = dialogs.filter(m => /失敗|エラー/.test(m) && !/発行していません|すでに処理されています|途中失敗工業/.test(m));
   ok("「失敗」「エラー」の通知がゼロ", failAlerts.length === 0, JSON.stringify(failAlerts));
   await browser.close();
   console.log(`\n結果: ${passed} OK / ${failed} FAIL`);

@@ -1608,15 +1608,18 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
     const cl = clients.find(c => c.id === d.clientId);
     if (!confirm(`${cl?.name || "—"} の請求書（¥${fmt(d.total)}）を発行しますか？${company?.approvalEnabled && company?.invoiceApproval ? "\n承認後に発行・送信されます。" : "\n次回のcron実行時に自動送信されます。"}`)) return;
     if (company?.approvalEnabled && company?.invoiceApproval) {
-      // 承認待ちに追加
-      await addDoc(collection(db, "pendingBillings"), {
+      // 承認待ちに追加。承認待ちを作る／納品書を承認待ちにする、を1回で書く
+      // （途中で切れると、納品書が未請求のまま残り、承認待ちと別にもう一度発行できてしまう）
+      const pb = writeBatch(db);
+      pb.set(doc(collection(db, "pendingBillings")), {
         type: "invoice", clientId: d.clientId, clientName: cl?.name || "",
         divisionId: cl?.divisionId || "", deliveryId: d.id, deliveryDocNo: d.docNo,
         items: d.items, subtotal: d.subtotal, tax: d.tax, total: d.total,
         billingType: "immediate", notes: d.notes || "",
         status: "pending", createdAt: serverTimestamp(),
       });
-      await updateDoc(doc(db, "deliveries", d.id), { status: "pending_approval" });
+      pb.update(doc(db, "deliveries", d.id), { status: "pending_approval" });
+      await pb.commit();
       alert("承認待ちに追加しました。承認後に請求書が発行・送信されます。");
       return;
     }
@@ -2526,7 +2529,9 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
     const { sub, tax, total: grandTotal } = totalFromItems(allItems);
     const joinedNotes = dels.map(d => d.notes).filter(Boolean).join("　／　");
     if (company?.approvalEnabled && company?.invoiceApproval) {
-      await addDoc(collection(db, "pendingBillings"), {
+      // 承認待ちを作る／納品書を承認待ちにする、を1回で書く
+      const batch2 = writeBatch(db);
+      batch2.set(doc(collection(db, "pendingBillings")), {
         type: "invoice", clientId: client.id, clientName: client.name || "",
         divisionId: client.divisionId || "",
         deliveryIds: dels.map(d => d.id), deliveryDocNos: dels.map(d => d.docNo),
@@ -2537,7 +2542,6 @@ function MonthlyBilling({ clients, deliveries, invoices, company, balances, divi
         notes: joinedNotes,
         status: "pending", createdAt: serverTimestamp(),
       });
-      const batch2 = writeBatch(db);
       dels.forEach(d => batch2.update(doc(db, "deliveries", d.id), { status: "pending_approval" }));
       await batch2.commit();
       alert(`承認待ちに追加しました（${dels.length}件まとめ、${period.label}）`);
@@ -5305,20 +5309,27 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
         inv.deliveryRefs = p.deliveryDocNo ? [p.deliveryDocNo] : [];
       }
       // scheduledSendDateは使用しない（承認後は即送信）
-      const invRef = await addDoc(collection(db, "invoices"), inv);
-      // 納品書をinvoiced状態に
+      // 請求書を作る／納品書を請求済にする／売掛を足す／承認済にする、を1回の書き込みにまとめる。
+      // 順に書くと、途中で切れたとき請求書だけが残り（売掛は増えず、承認待ちにも残る）、
+      // もう一度押すと同じ請求書がもう1通できる。2人が同時に押したときも、承認待ちの状態を
+      // 書き込みの中で確かめるので、2通目は止まる
       const delIds = p.deliveryIds ? (Array.isArray(p.deliveryIds) ? p.deliveryIds : [p.deliveryIds]) : (p.deliveryId ? [p.deliveryId] : []);
-      for (const did of delIds) {
-        await updateDoc(doc(db, "deliveries", did), { status: "invoiced", invoiceId: invRef.id });
-      }
-      // 残高更新
-      const bal = balances[p.clientId] || {};
-      await setDoc(doc(db, "clientBalances", p.clientId), {
-        clientId: p.clientId, prevBalance: bal.currentBalance || 0,
-        currentBalance: (bal.currentBalance || 0) + p.total,
-        paidAmount: bal.paidAmount || 0, updatedAt: serverTimestamp(),
-      }, { merge: true });
-      await updateDoc(doc(db, "pendingBillings", p.id), { status: "approved", approvedAt: serverTimestamp(), invoiceDocNo: inv.docNo });
+      const invRef = doc(collection(db, "invoices"));
+      await runTransaction(db, async (tx) => {
+        const pRef = doc(db, "pendingBillings", p.id);
+        const balRef = doc(db, "clientBalances", p.clientId);
+        const pSnap = await tx.get(pRef);
+        const delSnaps = await Promise.all(delIds.map(did => tx.get(doc(db, "deliveries", did))));
+        const balSnap = await tx.get(balRef);
+        if (!pSnap.exists() || pSnap.data().status !== "pending") throw new Error("この承認待ちはすでに処理されています。二重に発行しないよう止めました（画面を再読み込みしてください）");
+        if (delSnaps.some(ds => !ds.exists())) throw new Error("もとの納品書が見つかりません（削除された可能性があります）。請求書は発行していません。この承認待ちは却下して、納品書から発行し直してください");
+        if (delSnaps.some(ds => ds.data().status === "invoiced")) throw new Error("もとの納品書がすでに請求済みです。二重に発行しないよう止めました");
+        const cur = balSnap.exists() ? (balSnap.data().currentBalance || 0) : 0;
+        tx.set(invRef, inv);
+        delIds.forEach(did => tx.update(doc(db, "deliveries", did), { status: "invoiced", invoiceId: invRef.id }));
+        tx.set(balRef, { clientId: p.clientId, prevBalance: cur, currentBalance: cur + (p.total || 0), updatedAt: serverTimestamp() }, { merge: true });
+        tx.update(pRef, { status: "approved", approvedAt: serverTimestamp(), invoiceDocNo: inv.docNo, invoiceId: invRef.id });
+      });
 
       // 承認後メール自動送信
       const emails = getEmails(cl);
@@ -5382,6 +5393,8 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
     if (!confirm(`${cl.name || p.clientName}（${emails.join(", ")}）に${methodLabel}で送信します。よろしいですか？${sendMethod === "stripe" ? "\n\n※ Stripe手数料（3.6%）が発生します。" : ""}`)) return;
     setSending(p.id);
     try {
+      const cur = await getDoc(doc(db, "pendingBillings", p.id));
+      if (!cur.exists() || cur.data().status !== "pending") throw new Error("この承認待ちはすでに処理されています。二重に送らないよう止めました（画面を再読み込みしてください）");
       if (sendMethod === "stripe") {
         // Stripe送信
         const items = p.invoiceItems || [{ name: `${p.invoiceDocNo} 未入金分`, qty: 1, unitAmount: p.total || 0 }];
@@ -5466,12 +5479,20 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
   };
   const reject = async (p) => {
     if (!confirm("この承認待ちを却下しますか？")) return;
-    await updateDoc(doc(db, "pendingBillings", p.id), { status: "rejected", rejectedAt: serverTimestamp() });
-    // 納品書をunissuedに戻す
+    // 却下にする／納品書を未請求に戻す、を1回の書き込みにまとめる。
+    // 承認と同時に押されたときに、発行済みの納品書を未請求に戻さないよう、状態を確かめてから書く
     const delIds = p.deliveryIds ? (Array.isArray(p.deliveryIds) ? p.deliveryIds : [p.deliveryIds]) : (p.deliveryId ? [p.deliveryId] : []);
-    for (const did of delIds) {
-      await updateDoc(doc(db, "deliveries", did), { status: "unissued", invoiceId: "" });
-    }
+    try {
+      await runTransaction(db, async (tx) => {
+        const pRef = doc(db, "pendingBillings", p.id);
+        const pSnap = await tx.get(pRef);
+        const delSnaps = await Promise.all(delIds.map(did => tx.get(doc(db, "deliveries", did))));
+        if (!pSnap.exists() || pSnap.data().status !== "pending") throw new Error("この承認待ちはすでに処理されています（画面を再読み込みしてください）");
+        tx.update(pRef, { status: "rejected", rejectedAt: serverTimestamp() });
+        // 請求済みになっている納品書（別の経路で発行されたもの）は戻さない
+        delSnaps.forEach(ds => { if (ds.exists() && ds.data().status !== "invoiced") tx.update(ds.ref, { status: "unissued", invoiceId: "" }); });
+      });
+    } catch (e) { alert("却下できませんでした: " + e.message); }
   };
 
   const pending = pendings.filter(p => p.status === "pending");
