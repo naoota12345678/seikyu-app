@@ -163,10 +163,11 @@ function linkedDeliveriesOf(inv, deliveries) {
       && (inv.deliveryRef === d.docNo || (inv.deliveryRefs || []).includes(d.docNo))));
 }
 // 請求書の deliveryRefs の1件（伝票番号）に当たる納品書。印刷・明細書の日付と備考に使う。
-// 番号が重複していても他社の納品書を拾わないよう、この請求書にひも付くもの→同じ取引先のものの順で探す
+// 番号が重複していても他社の納品書を拾わないよう、この請求書にひも付くもの→同じ取引先の（どの請求書にもひも付いていない）古いものの順で探す。
+// 別の請求書にひも付いた納品書は、同じ取引先でも拾わない（中身の違う納品書を刷ってしまう）
 function deliveryForRef(inv, ref, deliveries) {
   const list = (deliveries || []).filter(d => d.docNo === ref);
-  return list.find(d => d.invoiceId === inv.id) || list.find(d => d.clientId === inv.clientId) || null;
+  return list.find(d => d.invoiceId === inv.id) || list.find(d => !d.invoiceId && d.clientId === inv.clientId) || null;
 }
 
 // 請求書を消すときの売掛の戻し（発行時に足した「差引請求額」を引く）。引かないと売掛残高が過大なまま残る。
@@ -1921,7 +1922,7 @@ function ResendModal({ invoice, clients, company, divisions, balances, invoices 
         const pdfSnap = await getDocs(query(collection(db, "pdfHistory"), orderBy("createdAt", "desc")));
         // 番号が重複していると他社の請求書PDFを送ってしまうので、この請求書のIDで探す。
         // IDを記録していない古い履歴は、同じ取引先・同じ番号の「請求書」に限る
-        const pdfDoc = pdfSnap.docs.find(d => d.data().invoiceId === invoice.id)
+        const pdfDoc = pdfSnap.docs.find(d => d.data().invoiceId === invoice.id && d.data().type === "請求書")
           || pdfSnap.docs.find(d => { const h = d.data(); return !h.invoiceId && h.type === "請求書" && h.docNo === invoice.docNo && h.clientId === invoice.clientId; });
         if (pdfDoc) pdfUrl = pdfDoc.data().storageUrl || "";
       } catch (e) { console.warn("PDF URL取得スキップ:", e.message); }
