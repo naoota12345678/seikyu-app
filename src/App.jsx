@@ -113,6 +113,9 @@ function genDocNo(prefix, list) {
 // 覚えておき、一覧の最大番号と比べて大きい方の次を振る（cron-billing の genDocNo と同じ規則）。
 // 一覧の最大番号だけで決めると、最後の1枚を削除したあとに同じ番号がもう一度付き、
 // 取引先の手元に同じ番号で中身の違う書類が2枚できる
+// 後片づけ（書類の削除・承認OFF）で拾う承認待ち。「送信中」も含める（含めないと片づけから漏れる）
+const PENDING_OPEN_STATUSES = ["pending", "sending"];
+
 async function nextDocNo(prefix, list = []) {
   const fromList = genDocNo(prefix, list);
   const head = fromList.slice(0, fromList.lastIndexOf("-") + 1);
@@ -1509,7 +1512,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
     balWrites.forEach(w => batch.set(w.ref, w.data, { merge: true }));
     await batch.commit();
     // 関連する承認待ち（pendingBillings）を削除
-    const pbSnap = await getDocs(query(collection(db, "pendingBillings"), where("status", "==", "pending")));
+    const pbSnap = await getDocs(query(collection(db, "pendingBillings"), where("status", "in", PENDING_OPEN_STATUSES)));
     for (const pbDoc of pbSnap.docs) {
       const d = pbDoc.data();
       const delIds = d.deliveryIds ? (Array.isArray(d.deliveryIds) ? d.deliveryIds : [d.deliveryIds]) : (d.deliveryId ? [d.deliveryId] : []);
@@ -1544,7 +1547,7 @@ function DeliveriesList({ clients, deliveries, products, invoices, company, bala
       // 消す番号を使用済みとして刻んでから消す（同じ番号を次の納品書に付けない）
       await rememberUsedDocNos(targets.map(d => d.docNo));
       // pendingBillingsを1回だけ取得
-      const pbSnap = await getDocs(query(collection(db, "pendingBillings"), where("status", "==", "pending")));
+      const pbSnap = await getDocs(query(collection(db, "pendingBillings"), where("status", "in", PENDING_OPEN_STATUSES)));
       const batch = writeBatch(db);
       for (const { id } of targets) {
         batch.delete(doc(db, "deliveries", id));
@@ -2143,7 +2146,7 @@ function InvoicesList({ clients, invoices, deliveries, company, balances, divisi
       + (relDels.length ? `\n納品書 ${relDels.map(d => d.docNo).join(", ")} を「未請求」に戻します。` : "")
       + recurNote)) return;
     // 承認待ちの照合はクエリなので、トランザクションに入る前に済ませる（tx内でクエリは不可）
-    const pbSnap = await getDocs(query(collection(db, "pendingBillings"), where("status", "==", "pending")));
+    const pbSnap = await getDocs(query(collection(db, "pendingBillings"), where("status", "in", PENDING_OPEN_STATUSES)));
     const pbRefs = pbSnap.docs.filter(pbDoc => {
       const d = pbDoc.data();
       return (d.invoiceIds || (d.invoiceId ? [d.invoiceId] : [])).includes(id);
@@ -5647,7 +5650,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
                 <div style={{ fontSize: 20, fontWeight: 700, color: C.navy }}>合計: ¥{fmt(p.total)}</div>
                 <div style={{ display: "flex", gap: 8 }}>
                   {isAdmin && <>
-                    {p.status === "pending" && <>
+                    {pendingActionable(p) && <>
                       {p.type === "invoice" ? (
                         <button style={{ ...s.btn("green"), fontSize: 13 }} onClick={() => { setPreviewTarget(null); approveInvoice(p); }} disabled={!!sending}>承認・発行</button>
                       ) : <>
@@ -5714,7 +5717,7 @@ function SettingsPage({ company, setCompany, isAdmin, currentUser }) {
     const wasEnabled = company?.approvalEnabled === true;
     const nowDisabled = saveData.approvalEnabled !== true;
     if (wasEnabled && nowDisabled) {
-      const pbSnap = await getDocs(query(collection(db, "pendingBillings"), where("status", "==", "pending")));
+      const pbSnap = await getDocs(query(collection(db, "pendingBillings"), where("status", "in", PENDING_OPEN_STATUSES)));
       const pendingCount = pbSnap.size;
       if (pendingCount > 0) {
         const action = confirm(`承認待ちが ${pendingCount} 件あります。\n\n「OK」→ 承認待ちを削除し、納品書を未請求に戻します（月締め画面から再発行できます）\n「キャンセル」→ 承認設定の変更を中止`);
@@ -5722,7 +5725,9 @@ function SettingsPage({ company, setCompany, isAdmin, currentUser }) {
         // pending承認待ちを削除し、関連する納品書をunissuedに戻す
         for (const pbDoc of pbSnap.docs) {
           const p = pbDoc.data();
-          const delIds = p.deliveryIds ? (Array.isArray(p.deliveryIds) ? p.deliveryIds : [p.deliveryIds]) : [];
+          // 締め請求は deliveryIds、納品書1枚からの承認待ちは deliveryId に持つ（両方見ないと
+          // 1枚ぶんの納品書が「承認待ち」のまま残り、どこからも発行できなくなる）
+          const delIds = p.deliveryIds ? (Array.isArray(p.deliveryIds) ? p.deliveryIds : [p.deliveryIds]) : (p.deliveryId ? [p.deliveryId] : []);
           for (const did of delIds) {
             try { await updateDoc(doc(db, "deliveries", did), { status: "unissued" }); } catch (e) { /* skip */ }
           }

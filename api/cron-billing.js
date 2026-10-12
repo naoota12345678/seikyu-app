@@ -228,7 +228,8 @@ export default async function handler(req, res) {
         stuckSnap.docs.forEach(d => batch0.update(d.ref, { status: "unissued" }));
         await batch0.commit();
         // 対応するpending承認待ちも削除
-        const pbSnap = await db.collection("pendingBillings").where("status", "==", "pending").get();
+        // 「送信中」（画面で送っている途中）も片づける。承認OFFなので、残しても誰も処理できない
+        const pbSnap = await db.collection("pendingBillings").where("status", "in", ["pending", "sending"]).get();
         const batch0b = db.batch();
         pbSnap.docs.forEach(d => batch0b.delete(d.ref));
         if (pbSnap.size > 0) await batch0b.commit();

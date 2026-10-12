@@ -135,6 +135,15 @@ async function seed() {
   });
   await rereq("P5", "C4", "INV-RE-001");
   await rereq("P6", "C5", "INV-RE-002");
+  // [H] 承認OFFの後片づけ: 締め請求（deliveryIds）、納品書1枚（deliveryId）、送信中（deliveryId）
+  await del("D20", NO(30), "C3", "pending_approval", null, 1000);
+  await db.collection("pendingBillings").doc("P20").set({ type: "invoice", clientId: "C3", clientName: "", divisionId: "",
+    deliveryIds: ["D20"], items: items(1000), subtotal: 1000, tax: 100, total: 1100, billingType: "closing", notes: "", status: "pending", createdAt: ts() });
+  await del("D21", NO(31), "C3", "pending_approval", null, 1000);
+  await pend("P21", "C3", "D21", NO(31), 1000);
+  await del("D22", NO(32), "C3", "pending_approval", null, 1000);
+  await pend("P22", "C3", "D22", NO(32), 1000);
+  await db.collection("pendingBillings").doc("P22").update({ status: "sending", sendingAt: admin.firestore.Timestamp.now() });
 }
 
 const dialogs = [];
@@ -346,7 +355,7 @@ const settle = (page) => page.waitForTimeout(2000);
   await page.unroute("**/api/send-invoice");
 
   console.log("  -- 却下");
-  await row(page, "締め株式会社").getByRole("button", { name: "却下", exact: true }).click();
+  await row(page, "締め株式会社").filter({ hasText: "2,200" }).getByRole("button", { name: "却下", exact: true }).click();
   await settle(page);
   ok("承認待ちは却下になる", (await get("pendingBillings", "P4"))?.status === "rejected");
   ok("納品書は未請求に戻る", (await get("deliveries", "D15"))?.status === "unissued");
@@ -358,6 +367,20 @@ const settle = (page) => page.waitForTimeout(2000);
   const newP = (await db.collection("pendingBillings").where("deliveryId", "==", "D16").get()).docs.map(d => d.data());
   ok("承認待ちが1件でき、納品書は承認待ちになる", newP.length === 1 && newP[0].status === "pending" && (await get("deliveries", "D16"))?.status === "pending_approval",
     JSON.stringify({ n: newP.length, d: (await get("deliveries", "D16"))?.status }));
+
+  // ---------- H. 承認をOFFにしたときの後片づけ
+  console.log("\n[H] 承認をOFFにしたときの後片づけ");
+  await nav(page, "⚙ 設定");
+  await page.getByText("承認フローを使用する").click();
+  const nH = dialogs.length;
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await page.waitForTimeout(4000);
+  ok("締め請求ぶん（deliveryIds）の納品書が未請求に戻る", (await get("deliveries", "D20"))?.status === "unissued", JSON.stringify((await get("deliveries", "D20"))?.status));
+  ok("納品書1枚ぶん（deliveryId）の納品書も未請求に戻る（旧: 承認待ちのまま残った）", (await get("deliveries", "D21"))?.status === "unissued", JSON.stringify((await get("deliveries", "D21"))?.status));
+  ok("送信中の承認待ちも片づく（旧: 片づけから漏れた）", !(await get("pendingBillings", "P22")) && (await get("deliveries", "D22"))?.status === "unissued",
+    JSON.stringify({ p: (await get("pendingBillings", "P22"))?.status, d: (await get("deliveries", "D22"))?.status }));
+  ok("処理済み（承認済・却下）は残る", (await get("pendingBillings", "P1"))?.status === "approved" && (await get("pendingBillings", "P4"))?.status === "rejected");
+  ok("片づけた件数を知らせる", dialogs.slice(nH).some(m => m.includes("承認待ちを削除し")), JSON.stringify(dialogs.slice(nH)));
 
   ok("画面のエラー（pageerror）がゼロ", pageErrors.length === 0, JSON.stringify(pageErrors));
   const failAlerts = dialogs.filter(m => /失敗|エラー/.test(m) && !expectedAlerts.includes(m));
