@@ -276,7 +276,10 @@ export default async function handler(req, res) {
           if (settings0.approvalEnabled && settings0.invoiceApproval) {
             // 承認モード: 締日当日に承認待ちに追加
             const { sub, tax, total } = totalFromItems(allItems);
-            await db.collection("pendingBillings").add({
+            // 承認待ちを作る／納品書を承認待ちにする、を1回で書く（途中で切れると、承認待ちがあるのに
+            // 納品書が未請求のまま残り、翌日もう一度承認待ちが作られる）
+            const batch2 = db.batch();
+            batch2.set(db.collection("pendingBillings").doc(), {
               type: "invoice", clientId: client.id, clientName: client.name || "",
               divisionId: client.divisionId || "",
               deliveryIds: dels.map(d => d.id), deliveryDocNos: dels.map(d => d.data().docNo),
@@ -288,7 +291,6 @@ export default async function handler(req, res) {
               status: "pending", createdAt: FieldValue.serverTimestamp(),
             });
             // 納品書を承認待ち状態にマーク（再取得防止）
-            const batch2 = db.batch();
             dels.forEach(d => batch2.update(db.collection("deliveries").doc(d.id), { status: "pending_approval" }));
             await batch2.commit();
             results.closing.push({ client: client.name, pending: true });
@@ -349,7 +351,10 @@ export default async function handler(req, res) {
           const lastDay2 = new Date(jNow.getFullYear(), jNow.getMonth() + 1, 0).getDate();
           const bd = (r.billingDay || 0) === 0 ? lastDay2 : Math.min(r.billingDay, lastDay2);
           const billingDate = `${jNow.getFullYear()}-${String(jNow.getMonth()+1).padStart(2,"0")}-${String(bd).padStart(2,"0")}`;
-          await db.collection("pendingBillings").add({
+          // 承認待ちを作る／その月を発行済みにする、を1回で書く（途中で切れると、翌日同じ月の承認待ちが
+          // もう1件作られるか、承認待ちが無いのに発行済みになる）
+          const rb = db.batch();
+          rb.set(db.collection("pendingBillings").doc(), {
             type: "invoice", clientId: r.clientId, clientName,
             divisionId: r.divisionId || "",
             items, subtotal: sub, tax, total,
@@ -357,7 +362,8 @@ export default async function handler(req, res) {
             billingDay: r.billingDay || 0, recurringId: recurDoc.id,
             status: "pending", createdAt: FieldValue.serverTimestamp(),
           });
-          await recurDoc.ref.update({ lastIssuedMonth: ym });
+          rb.update(recurDoc.ref, { lastIssuedMonth: ym });
+          await rb.commit();
           results.recurring.push({ client: r.clientId, item: r.itemName, pending: true, billingDate });
         } else {
           // 通常モード: 発行日当日に即発行

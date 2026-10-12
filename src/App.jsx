@@ -1291,7 +1291,7 @@ function HomePage({ clients, deliveries, invoices, balances, pendings, setPage, 
   const monthDelTotal = monthDels.reduce((a, d) => a + (d.total || 0), 0);
   const monthUnissued = monthDels.filter(d => d.status === "unissued");
   const monthUnissuedTotal = monthUnissued.reduce((a, d) => a + (d.total || 0), 0);
-  const pendingApprovals = company?.approvalEnabled ? pendings.filter(p => p.status === "pending") : [];
+  const pendingApprovals = company?.approvalEnabled ? pendings.filter(p => p.status === "pending" || p.status === "sending") : [];
   const unsentInv = invoices.filter(i => i.status === "unpaid" && (!i.sentStatus || i.sentStatus === "scheduled"));
   const unissuedDel = deliveries.filter(d => d.status === "unissued");
 
@@ -5273,6 +5273,16 @@ function RecurringPage({ clients, divisions, invoices, company, balances, isAdmi
 }
 
 // ── Pending Approvals ─────────────────────────────────────────────────────────
+// 承認待ちの「送信中」は、送る前に立てる印（2人が同時に送らないため）。
+// ブラウザを閉じるなどで「送信中」のまま残ったものは、10分たてば操作できるようにする
+// （ずっと残って誰も触れなくなるのを防ぐ。送れていたかは送信履歴で確かめてもらう）
+const PENDING_SENDING_STALE_MS = 10 * 60 * 1000;
+function pendingSendingStale(p) {
+  const at = p?.sendingAt?.toMillis?.() || 0;
+  return p?.status === "sending" && Date.now() - at > PENDING_SENDING_STALE_MS;
+}
+function pendingActionable(p) { return p?.status === "pending" || pendingSendingStale(p); }
+
 function PendingPage({ clients, company, divisions, balances, isAdmin, invoices }) {
   const [pendings, setPendings] = useState([]);
   const [sending, setSending] = useState(null);
@@ -5327,7 +5337,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
         const cur = balSnap.exists() ? (balSnap.data().currentBalance || 0) : 0;
         tx.set(invRef, inv);
         delIds.forEach(did => tx.update(doc(db, "deliveries", did), { status: "invoiced", invoiceId: invRef.id }));
-        tx.set(balRef, { clientId: p.clientId, prevBalance: cur, currentBalance: cur + (p.total || 0), updatedAt: serverTimestamp() }, { merge: true });
+        tx.set(balRef, { clientId: p.clientId, prevBalance: cur, currentBalance: cur + (p.total || 0), ...(balSnap.exists() ? {} : { paidAmount: 0 }), updatedAt: serverTimestamp() }, { merge: true });
         tx.update(pRef, { status: "approved", approvedAt: serverTimestamp(), invoiceDocNo: inv.docNo, invoiceId: invRef.id });
       });
 
@@ -5392,9 +5402,18 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
     const methodLabel = sendMethod === "stripe" ? "Stripe請求書" : "メール";
     if (!confirm(`${cl.name || p.clientName}（${emails.join(", ")}）に${methodLabel}で送信します。よろしいですか？${sendMethod === "stripe" ? "\n\n※ Stripe手数料（3.6%）が発生します。" : ""}`)) return;
     setSending(p.id);
+    const pRef = doc(db, "pendingBillings", p.id);
+    // 送る前に、書き込みの中で「送信中」にする。確かめてから送るまでの間に、もう1人が同じものを
+    // 送らないようにするため（Stripe なら請求書が2通届き、二重に払われうる）。
+    // 送れなかったら承認待ちに戻し、送れたら承認済にする（送れたあとに承認待ちへは戻さない）
+    let claimed = false, sent = false;
     try {
-      const cur = await getDoc(doc(db, "pendingBillings", p.id));
-      if (!cur.exists() || cur.data().status !== "pending") throw new Error("この承認待ちはすでに処理されています。二重に送らないよう止めました（画面を再読み込みしてください）");
+      await runTransaction(db, async (tx) => {
+        const cur = await tx.get(pRef);
+        if (!cur.exists() || !pendingActionable(cur.data())) throw new Error("この承認待ちはすでに処理されているか、ほかの人が送信中です。二重に送らないよう止めました（画面を再読み込みしてください）");
+        tx.update(pRef, { status: "sending", sendingAt: serverTimestamp() });
+      });
+      claimed = true;
       if (sendMethod === "stripe") {
         // Stripe送信
         const items = p.invoiceItems || [{ name: `${p.invoiceDocNo} 未入金分`, qty: 1, unitAmount: p.total || 0 }];
@@ -5411,6 +5430,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
         });
         const data = await res.json();
         if (!data.success) throw new Error(data.error || "Stripe送信エラー");
+        sent = true;
         await addDoc(collection(db, "sendHistory"), {
           docNo: p.invoiceDocNo, invoiceId: (p.invoiceIds || [p.invoiceId]).join(","),
           clientId: p.clientId, clientName: cl.name || "",
@@ -5433,6 +5453,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
           // 送れたことを確かめてから「送信済み」を記録する。確かめないと、送れていないのに
           // 送信履歴・送信済み表示が付き、承認待ちからも消えて誰も気づけない（KY-006）
           if (!sendRes.ok) throw new Error(`メールを送信できませんでした（${sendRes.status}）。承認待ちに残してあるので、もう一度お試しください`);
+          sent = true;
           await addDoc(collection(db, "sendHistory"), {
             docNo: p.invoiceDocNo, invoiceId: (p.invoiceIds || [p.invoiceId]).join(","),
             clientId: p.clientId, clientName: cl.name || "",
@@ -5463,6 +5484,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
           // 送れたことを確かめてから「送信済み」を記録する。確かめないと、送れていないのに
           // 送信履歴・送信済み表示が付き、承認待ちからも消えて誰も気づけない（KY-006）
           if (!sendRes.ok) throw new Error(`メールを送信できませんでした（${sendRes.status}）。承認待ちに残してあるので、もう一度お試しください`);
+          sent = true;
           await addDoc(collection(db, "sendHistory"), {
             docNo: p.invoiceDocNo, invoiceId: p.invoiceId,
             clientId: p.clientId, clientName: cl.name || "",
@@ -5473,8 +5495,12 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
         }
         alert("メールを送信しました");
       }
-      await updateDoc(doc(db, "pendingBillings", p.id), { status: "approved", approvedAt: serverTimestamp(), approvedMethod: sendMethod });
-    } catch (e) { alert("送信エラー: " + e.message); }
+      await updateDoc(pRef, { status: "approved", approvedAt: serverTimestamp(), approvedMethod: sendMethod });
+    } catch (e) {
+      // 送れていれば承認済に、送れていなければ承認待ちに戻す（「送信中」のまま残さない）
+      if (claimed) await updateDoc(pRef, sent ? { status: "approved", approvedAt: serverTimestamp(), approvedMethod: sendMethod } : { status: "pending" }).catch(() => {});
+      alert((sent ? "送信はできましたが、記録の保存でエラーが出ました: " : "送信エラー: ") + e.message);
+    }
     setSending(null);
   };
   const reject = async (p) => {
@@ -5487,7 +5513,7 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
         const pRef = doc(db, "pendingBillings", p.id);
         const pSnap = await tx.get(pRef);
         const delSnaps = await Promise.all(delIds.map(did => tx.get(doc(db, "deliveries", did))));
-        if (!pSnap.exists() || pSnap.data().status !== "pending") throw new Error("この承認待ちはすでに処理されています（画面を再読み込みしてください）");
+        if (!pSnap.exists() || !pendingActionable(pSnap.data())) throw new Error("この承認待ちはすでに処理されているか、送信中です（画面を再読み込みしてください）");
         tx.update(pRef, { status: "rejected", rejectedAt: serverTimestamp() });
         // 請求済みになっている納品書（別の経路で発行されたもの）は戻さない
         delSnaps.forEach(ds => { if (ds.exists() && ds.data().status !== "invoiced") tx.update(ds.ref, { status: "unissued", invoiceId: "" }); });
@@ -5495,8 +5521,8 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
     } catch (e) { alert("却下できませんでした: " + e.message); }
   };
 
-  const pending = pendings.filter(p => p.status === "pending");
-  const done = pendings.filter(p => p.status !== "pending");
+  const pending = pendings.filter(p => p.status === "pending" || p.status === "sending");
+  const done = pendings.filter(p => p.status !== "pending" && p.status !== "sending");
 
   return (
     <div>
@@ -5517,7 +5543,9 @@ function PendingPage({ clients, company, divisions, balances, isAdmin, invoices 
                     <td style={s.td}><span style={s.badge(p.type==="invoice"?"navy":p.type==="recurring"?"blue":p.type==="re-request-email"?"red":p.type==="re-request-stripe"?"red":"gold")}>{p.type==="invoice"?"請求書発行":p.type==="recurring"?"定期":p.type==="re-request-email"?"✉再請求":p.type==="re-request-stripe"?"💳Stripe":"締日"}</span></td>
                     <td style={s.td}>{p.createdAt?.toDate?.()?.toLocaleDateString?.() || "—"}</td>
                     <td style={s.td}>
-                      {isAdmin ? (
+                      {p.status === "sending" && !pendingSendingStale(p) ? (
+                        <span style={{ fontSize: 12, color: C.gray }}>送信中…（10分たっても変わらなければ、送信履歴を確かめてください）</span>
+                      ) : isAdmin ? (
                         <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                           {p.type === "invoice" ? (
                             <button style={{ ...s.btn("green"), padding: "4px 10px", fontSize: 12 }} onClick={() => approveInvoice(p)} disabled={!!sending}>{sending===p.id ? "発行中..." : "承認・発行"}</button>

@@ -108,7 +108,7 @@ async function seed() {
   await inv("I8", PINV(3), "C1", [NO(12)], 9000);
   // [G] 承認待ちからの発行（承認は G の始めに設定で有効にする）
   await db.collection("clients").doc("C4").set(cl("二重押し商会"));
-  await db.collection("clients").doc("C5").set(cl("途中失敗工業"));
+  await db.collection("clients").doc("C5").set(cl("納品書消失工業"));
   await db.collection("clientBalances").doc("C4").set(b("C4", 0, 1000));
   await db.collection("clientBalances").doc("C5").set(b("C5", 0, 2000));
   const pend = (id, clientId, deliveryId, docNo, price) => db.collection("pendingBillings").doc(id).set({
@@ -128,9 +128,17 @@ async function seed() {
   await pend("P4", "C3", "D15", NO(23), 2000);
   // 画面から承認待ちに入れる
   await del("D16", NO(24), "C1", "unissued", null, 1000);
+  // 再請求メールの承認（2人が同時に送る／送信に失敗する）
+  const rereq = (id, clientId, docNo) => db.collection("pendingBillings").doc(id).set({
+    type: "re-request-email", clientId, clientName: "", email: "test-dest@example.com", invoiceDocNo: docNo, invoiceId: "",
+    total: 1100, message: "検証用の再請求です", status: "pending", createdAt: ts(),
+  });
+  await rereq("P5", "C4", "INV-RE-001");
+  await rereq("P6", "C5", "INV-RE-002");
 }
 
 const dialogs = [];
+const expectedAlerts = [];   // [G] で、区間ごとに件数と文言を確かめた通知（全体の「エラーゼロ」点検から外す）
 async function nav(page, label) {
   await page.click(`button:has-text("${label}")`);
   await page.waitForTimeout(800);
@@ -263,15 +271,17 @@ const settle = (page) => page.waitForTimeout(2000);
 
   console.log("  -- 途中で失敗する承認（もとの納品書が消えている）");
   const nDialogs = dialogs.length;
-  await row(page, "途中失敗工業").getByRole("button", { name: "承認・発行", exact: true }).click();
+  await row(page, "納品書消失工業").getByRole("button", { name: "承認・発行", exact: true }).click();
   await settle(page);
   ok("請求書は1通もできない（旧: 請求書だけ残っていた）", (await invsOf("C5")).length === 0, JSON.stringify((await invsOf("C5")).map(i => i.docNo)));
   ok("売掛は変わらない", (await bal("C5")).currentBalance === 2000, JSON.stringify((await bal("C5")).currentBalance));
   ok("承認待ちに残る", (await get("pendingBillings", "P2"))?.status === "pending");
-  ok("発行していないことが画面に出る", dialogs.slice(nDialogs).some(m => m.includes("発行していません")), JSON.stringify(dialogs.slice(nDialogs)));
-  await row(page, "途中失敗工業").getByRole("button", { name: "承認・発行", exact: true }).click();
+  await row(page, "納品書消失工業").getByRole("button", { name: "承認・発行", exact: true }).click();
   await settle(page);
   ok("もう一度押しても請求書はできない", (await invsOf("C5")).length === 0);
+  const gFail = dialogs.slice(nDialogs).filter(m => /失敗|エラー/.test(m));
+  ok("通知は「発行していません」の2件だけ", gFail.length === 2 && gFail.every(m => m.includes("発行していません")), JSON.stringify(gFail));
+  expectedAlerts.push(...gFail);
 
   console.log("  -- 2人が同時に「承認・発行」を押す");
   // もう1人の担当者の代わりに、別のブラウザでログインする
@@ -289,13 +299,51 @@ const settle = (page) => page.waitForTimeout(2000);
   const b4 = row(page, "二重押し商会").getByRole("button", { name: "承認・発行", exact: true });
   const b4b = row(page2, "二重押し商会").getByRole("button", { name: "承認・発行", exact: true });
   await b4.waitFor(); await b4b.waitFor();
+  const nDialogs2 = dialogs.length;
   await Promise.all([b4.click(), b4b.click()]);
   await page.waitForTimeout(4000);
+  const gDup = dialogs.slice(nDialogs2).filter(m => /失敗|エラー|すでに処理/.test(m));
+  ok("2本目は「すでに処理されています」で止まる（通知はその1件だけ）", gDup.length === 1 && gDup[0].includes("すでに処理されています"), JSON.stringify(gDup));
+  expectedAlerts.push(...gDup);
   const i4s = await invsOf("C4");
   ok("請求書は1通だけ（旧: 2通できうる）", i4s.length === 1, JSON.stringify(i4s.map(i => i.docNo)));
   ok("売掛は1通分（4,400）だけ増える", (await bal("C4")).currentBalance === 1000 + 4400, JSON.stringify((await bal("C4")).currentBalance));
   ok("納品書は1通目の請求書にひも付く", (await get("deliveries", "D14"))?.invoiceId === i4s[0]?.id);
+
+  console.log("  -- 再請求メールの承認を、2人が同時に送る");
+  // メール送信（/api/send-invoice）は、ここでは送らずに数える。わざと1.5秒かけて、2本目が
+  // 1本目の送信中に来るようにする
+  let mailHits = 0, mailFail = false;
+  const mockMail = async (route) => { mailHits++; await new Promise(r => setTimeout(r, 1500));
+    await route.fulfill(mailFail ? { status: 500, body: "{}" } : { status: 200, contentType: "application/json", body: '{"success":true}' }); };
+  await page.route("**/api/send-invoice", mockMail);
+  await page2.route("**/api/send-invoice", mockMail);
+  const m1 = row(page, "二重押し商会", "INV-RE-001").getByRole("button", { name: "✉ メール送信", exact: true });
+  const m2 = row(page2, "二重押し商会", "INV-RE-001").getByRole("button", { name: "✉ メール送信", exact: true });
+  await m1.waitFor(); await m2.waitFor();
+  const nDialogs3 = dialogs.length;
+  await Promise.all([m1.click(), m2.click()]);
+  await page.waitForTimeout(5000);
+  ok("メールは1通だけ送る（旧: 2通送りうる）", mailHits === 1, JSON.stringify(mailHits));
+  const sh5 = (await db.collection("sendHistory").where("docNo", "==", "INV-RE-001").get()).size;
+  ok("送信履歴は1件", sh5 === 1, JSON.stringify(sh5));
+  ok("承認待ちは承認済になる", (await get("pendingBillings", "P5"))?.status === "approved", JSON.stringify((await get("pendingBillings", "P5"))?.status));
+  const gMail = dialogs.slice(nDialogs3).filter(m => /失敗|エラー|すでに処理/.test(m));
+  ok("2本目は「ほかの人が送信中」で止まる（通知はその1件だけ）", gMail.length === 1 && gMail[0].includes("送信中"), JSON.stringify(gMail));
+  expectedAlerts.push(...gMail);
   await ctx2.close();
+
+  console.log("  -- 再請求メールの送信に失敗する");
+  mailFail = true; mailHits = 0;
+  const nDialogs4 = dialogs.length;
+  await row(page, "納品書消失工業", "INV-RE-002").getByRole("button", { name: "✉ メール送信", exact: true }).click();
+  await page.waitForTimeout(4000);
+  ok("送れなかったら承認待ちに戻る（送信中のまま残らない）", (await get("pendingBillings", "P6"))?.status === "pending", JSON.stringify((await get("pendingBillings", "P6"))?.status));
+  ok("送信履歴は残さない", (await db.collection("sendHistory").where("docNo", "==", "INV-RE-002").get()).size === 0);
+  const gMailFail = dialogs.slice(nDialogs4).filter(m => /失敗|エラー/.test(m));
+  ok("「送信できませんでした」と出る（通知はその1件だけ）", gMailFail.length === 1 && gMailFail[0].includes("送信できませんでした"), JSON.stringify(gMailFail));
+  expectedAlerts.push(...gMailFail);
+  await page.unroute("**/api/send-invoice");
 
   console.log("  -- 却下");
   await row(page, "締め株式会社").getByRole("button", { name: "却下", exact: true }).click();
@@ -312,7 +360,7 @@ const settle = (page) => page.waitForTimeout(2000);
     JSON.stringify({ n: newP.length, d: (await get("deliveries", "D16"))?.status }));
 
   ok("画面のエラー（pageerror）がゼロ", pageErrors.length === 0, JSON.stringify(pageErrors));
-  const failAlerts = dialogs.filter(m => /失敗|エラー/.test(m) && !/発行していません|すでに処理されています|途中失敗工業/.test(m));
+  const failAlerts = dialogs.filter(m => /失敗|エラー/.test(m) && !expectedAlerts.includes(m));
   ok("「失敗」「エラー」の通知がゼロ", failAlerts.length === 0, JSON.stringify(failAlerts));
   await browser.close();
   console.log(`\n結果: ${passed} OK / ${failed} FAIL`);
