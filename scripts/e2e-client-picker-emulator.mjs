@@ -54,9 +54,28 @@ async function seed() {
   await db.collection("clients").doc("C1").set(cl("コピー元商事", "DV1"));
   await db.collection("clients").doc("C2").set(cl("新しい物産", ""));
   await db.collection("clients").doc("C3").set(cl("三番目工業", "DV2"));
+  await db.collection("clients").doc("C4").set({ ...cl("請求済み商会", "DV1"), billingType: "immediate" });
   await db.collection("deliveries").doc("D1").set({
     docNo: "NO-209901-001", clientId: "C1", divisionId: "DV1", date: "2099-01-05",
     items: [{ name: "テスト品", qty: 1, unit: "個", price: 1000, taxRate: 10 }], subtotal: 1000, tax: 100, total: 1100,
+    status: "unissued", notes: "", createdAt: ts(),
+  });
+  // 請求済みの納品書（取引先は変えられない）
+  await db.collection("deliveries").doc("D2").set({
+    docNo: "NO-209901-002", clientId: "C4", divisionId: "DV1", date: "2099-01-06",
+    items: [{ name: "請求済み品", qty: 1, unit: "個", price: 2000, taxRate: 10 }], subtotal: 2000, tax: 200, total: 2200,
+    status: "invoiced", invoiceId: "I2", notes: "", createdAt: ts(),
+  });
+  await db.collection("invoices").doc("I2").set({
+    docNo: "INV-209901-002", clientId: "C4", divisionId: "DV1", date: "2099-01-06", dueDate: "2099-02-28", billingType: "immediate",
+    items: [{ name: "請求済み品", qty: 1, unit: "個", price: 2000, taxRate: 10 }], subtotal: 2000, tax: 200, total: 2200,
+    deliveryRef: "NO-209901-002", deliveryRefs: ["NO-209901-002"], status: "unpaid", createdAt: ts(),
+  });
+  await db.collection("clientBalances").doc("C4").set({ clientId: "C4", currentBalance: 2200, prevBalance: 0, paidAmount: 0 });
+  // 削除済みの取引先（clients に無い）の納品書
+  await db.collection("deliveries").doc("D3").set({
+    docNo: "NO-209901-003", clientId: "CX_DELETED", divisionId: "", date: "2099-01-07",
+    items: [{ name: "旧取引先の品", qty: 1, unit: "個", price: 500, taxRate: 10 }], subtotal: 500, tax: 50, total: 550,
     status: "unissued", notes: "", createdAt: ts(),
   });
 }
@@ -86,8 +105,8 @@ const delsOf = async (clientId) => (await db.collection("deliveries").where("cli
   const clientSel = page.locator('input[placeholder="取引先を検索..."] + select');
   const divSel = page.locator('select:has(option:has-text("指定なし（設定の自社情報を使用）"))');
   const shown = (sel) => sel.evaluate(s => s.options[s.selectedIndex]?.text ?? "");
-  const copy = async () => {
-    await page.locator("tbody tr").filter({ hasText: "NO-209901-001" }).getByRole("button", { name: "コピー", exact: true }).click();
+  const copy = async (no = "NO-209901-001") => {
+    await page.locator("tbody tr").filter({ hasText: no }).getByRole("button", { name: "コピー", exact: true }).click();
     await search.waitFor();
   };
   const save = async (label) => { await page.getByRole("button", { name: label, exact: true }).click(); await page.waitForTimeout(2000); };
@@ -99,7 +118,7 @@ const delsOf = async (clientId) => (await db.collection("deliveries").where("cli
   await page.waitForTimeout(300);
   ok("リストの表示は「選択してください」", (await shown(clientSel)) === "選択してください", await shown(clientSel));
   const nD = dialogs.length;
-  await save("更新");
+  await save("保存");
   ok("「取引先を選択してください」で止まる（旧: コピー元の取引先で黙って保存）", dialogs.slice(nD).some(m => m.includes("取引先を選択してください")), JSON.stringify(dialogs.slice(nD)));
   ok("コピー元の取引先に納品書が増えていない", (await delsOf("C1")).length === 1, JSON.stringify((await delsOf("C1")).length));
 
@@ -107,7 +126,7 @@ const delsOf = async (clientId) => (await db.collection("deliveries").where("cli
   await clientSel.selectOption("C2");
   await page.waitForTimeout(300);
   ok("事業部は「指定なし」に変わる（旧: コピー元の第一事業部のまま）", (await divSel.inputValue()) === "", await shown(divSel));
-  await save("更新");
+  await save("保存");
   const c2 = await delsOf("C2");
   ok("新しい会社に納品書が1枚できる", c2.length === 1, JSON.stringify(c2.length));
   ok("その納品書の事業部は空（差出人が設定の自社情報になる）", c2[0]?.divisionId === "", JSON.stringify(c2[0]?.divisionId));
@@ -118,7 +137,7 @@ const delsOf = async (clientId) => (await db.collection("deliveries").where("cli
   await clientSel.selectOption("C3");
   await page.waitForTimeout(300);
   ok("事業部は選んだ会社の第二事業部になる", (await divSel.inputValue()) === "DV2", await shown(divSel));
-  await save("更新");
+  await save("保存");
   const c3 = await delsOf("C3");
   ok("三番目工業に納品書が1枚・事業部 DV2", c3.length === 1 && c3[0]?.divisionId === "DV2", JSON.stringify(c3.map(d => d.divisionId)));
 
@@ -128,7 +147,7 @@ const delsOf = async (clientId) => (await db.collection("deliveries").where("cli
   await page.waitForTimeout(300);
   ok("コピー元の取引先が選ばれたまま", (await shown(clientSel)) === "コピー元商事", await shown(clientSel));
   ok("事業部もそのまま（第一事業部）", (await divSel.inputValue()) === "DV1", await shown(divSel));
-  await save("更新");
+  await save("保存");
   const c1 = await delsOf("C1");
   ok("コピー元の取引先に、同じ事業部で納品書が1枚増える", c1.length === 2 && c1.every(d => d.divisionId === "DV1"), JSON.stringify(c1.map(d => d.divisionId)));
 
@@ -139,6 +158,39 @@ const delsOf = async (clientId) => (await db.collection("deliveries").where("cli
   await clientSel.selectOption("C2");
   await page.waitForTimeout(300);
   ok("先に選んだ事業部が残る", (await divSel.inputValue()) === "DV2", await shown(divSel));
+  await page.getByRole("button", { name: "キャンセル", exact: true }).click();
+  await page.waitForTimeout(500);
+
+  console.log("\n[6] 請求済みの納品書を編集する（取引先は変えられない・金額は直せる）");
+  await page.locator("tbody tr").filter({ hasText: "NO-209901-002" }).getByRole("button", { name: "編集", exact: true }).click();
+  await search.waitFor();
+  ok("取引先のリストは触れない", await clientSel.isDisabled());
+  ok("検索欄も触れない", await search.isDisabled());
+  ok("理由が出る", await page.getByText("請求済みのため取引先は変えられません").isVisible());
+  await page.locator('input[type="number"]').nth(0).fill("2");
+  await save("更新");
+  const d2 = (await db.collection("deliveries").doc("D2").get()).data();
+  const i2 = (await db.collection("invoices").doc("I2").get()).data();
+  ok("金額の修正は保存できる（取引先はそのまま）", d2.clientId === "C4" && d2.total === 4400, JSON.stringify([d2.clientId, d2.total]));
+  ok("請求書も同じ取引先のまま金額が連動", i2.clientId === "C4" && i2.total === 4400, JSON.stringify([i2.clientId, i2.total]));
+  const b1 = (await db.collection("clientBalances").doc("C4").get()).data();
+  ok("差額は同じ取引先の残高に付く", b1.currentBalance === 4400, JSON.stringify(b1.currentBalance));
+
+  console.log("\n[7] 削除済みの取引先の納品書をコピーして、そのまま保存する");
+  await copy("NO-209901-003");
+  ok("取引先は「選択してください」", (await shown(clientSel)) === "選択してください", await shown(clientSel));
+  ok("保存ボタンは「保存」（コピーは新しく作るので）", await page.getByRole("button", { name: "保存", exact: true }).isVisible());
+  const nD7 = dialogs.length;
+  await save("保存");
+  ok("「取引先を選択してください」で止まる（旧: 削除済みの取引先で保存）", dialogs.slice(nD7).some(m => m.includes("取引先を選択してください")), JSON.stringify(dialogs.slice(nD7)));
+  ok("削除済みの取引先に納品書が増えていない", (await delsOf("CX_DELETED")).length === 1);
+  await page.getByRole("button", { name: "キャンセル", exact: true }).click();
+  await page.waitForTimeout(500);
+
+  console.log("\n[8] 未請求の納品書の編集は、これまでどおり取引先を変えられる");
+  await page.locator("tbody tr").filter({ hasText: "NO-209901-001" }).getByRole("button", { name: "編集", exact: true }).click();
+  await search.waitFor();
+  ok("取引先のリストを触れる", !(await clientSel.isDisabled()));
   await page.getByRole("button", { name: "キャンセル", exact: true }).click();
   await page.waitForTimeout(500);
 

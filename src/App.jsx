@@ -931,7 +931,15 @@ function ItemRow({ item, idx, onChange, onRemove, onInsert, onPickProduct, produ
 // ── Delivery Form ─────────────────────────────────────────────────────────────
 function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, company, invoices, balances, onSave, onClose, editing }) {
   const defRate = company?.defaultTaxRate !== undefined ? company.defaultTaxRate : 10;
-  const [form, setForm] = useState(editing || { clientId: "", divisionId: "", date: today(), notes: "", items: [{ name: "", qty: 1, unit: "", price: 0, taxRate: defRate }] });
+  // コピーで開いたとき、コピー元の取引先が削除済みなら選ばれていない状態にする
+  // （リストに無いので画面は「選択してください」なのに、中身は古い取引先のまま保存されるため）
+  const [form, setForm] = useState(() => {
+    const init = editing || { clientId: "", divisionId: "", date: today(), notes: "", items: [{ name: "", qty: 1, unit: "", price: 0, taxRate: defRate }] };
+    return !init.id && init.clientId && !clients.some(c => c.id === init.clientId) ? { ...init, clientId: "" } : init;
+  });
+  // 請求済み・承認待ちの納品書は取引先を変えられない（請求書・承認待ちは元の取引先のまま残り、
+  // 金額の差額だけが新しい取引先の残高に付いて、請求書と残高の取引先が食い違うため）
+  const clientLocked = !!editing?.id && (editing.status || "unissued") !== "unissued";
   const [pickerIdx, setPickerIdx] = useState(null);
   const [clientSearch, setClientSearch] = useState("");
   const filteredClients = clientSearch ? clients.filter(c => matchSearch(clientSearch, c.name, c.kana, c.code)) : clients;
@@ -944,6 +952,8 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
   const taxGroups = calcTaxByRate(form.items);
   const save = async () => {
     if (!form.clientId) return alert("取引先を選択してください");
+    if (!editing?.id && !clients.some(c => c.id === form.clientId)) return alert("取引先を選択してください");
+    if (clientLocked && form.clientId !== editing.clientId) return alert("請求済み・承認待ちの納品書は取引先を変えられません");
     if (!form.items.some(i => i.name)) return alert("品目を入力してください");
     const cl = clients.find(c => c.id === form.clientId);
     const isImmediate = cl && cl.billingType !== "closing" && cl.billingType !== "monthly";
@@ -1067,7 +1077,7 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
         </div>
         <div style={{ ...s.row, marginBottom: 16 }}>
           <div style={s.col}><span style={s.label}>取引先 *</span>
-            <input style={{ ...s.input, marginBottom: 4 }} placeholder="取引先を検索..." value={clientSearch} onChange={e => {
+            <input style={{ ...s.input, marginBottom: 4 }} placeholder="取引先を検索..." value={clientSearch} disabled={clientLocked} onChange={e => {
               const q = e.target.value;
               setClientSearch(q);
               // 検索で今の取引先がリストから消えたら選択を外す。外さないと画面は「選択してください」なのに、
@@ -1075,7 +1085,7 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
               const cur = clients.find(c => c.id === form.clientId);
               if (q && cur && !matchSearch(q, cur.name, cur.kana, cur.code)) setF("clientId", "");
             }} />
-            <select style={s.select} value={form.clientId} onChange={e => {
+            <select style={s.select} value={form.clientId} disabled={clientLocked} onChange={e => {
               const cid = e.target.value;
               const cl = clients.find(c => c.id === cid);
               setF("clientId", cid);
@@ -1086,6 +1096,9 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
               <option value="">選択してください</option>
               {filteredClients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
+            {clientLocked && <span style={{ fontSize: 11, color: C.gray, marginTop: 4 }}>{editing.status === "pending_approval"
+              ? "承認待ちのため取引先は変えられません。変えるときは承認待ちを却下してからにしてください"
+              : "請求済みのため取引先は変えられません。変えるときは請求書を削除（締め請求は締め取消）してからにしてください"}</span>}
           </div>
           <div style={s.col}><span style={s.label}>事業部</span>
             <select style={s.select} value={form.divisionId||""} onChange={e => setF("divisionId", e.target.value)}>
@@ -1108,7 +1121,7 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
         <div style={s.col}><span style={s.label}>備考（請求書・請求明細書にも記載されます）</span><textarea style={{ ...s.input, minHeight: 60 }} value={form.notes} onChange={e => setF("notes", e.target.value)} /></div>
         <div style={{ ...s.row, justifyContent: "flex-end", marginTop: 20 }}>
           <button style={s.btn("light")} onClick={onClose}>キャンセル</button>
-          <button style={s.btn("primary")} onClick={save}>{editing ? "更新" : "保存"}</button>
+          <button style={s.btn("primary")} onClick={save}>{editing?.id ? "更新" : "保存"}</button>
         </div>
       </div>
       {pickerIdx !== null && <ProductPicker products={products} onClose={() => setPickerIdx(null)}
