@@ -1067,12 +1067,21 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
         </div>
         <div style={{ ...s.row, marginBottom: 16 }}>
           <div style={s.col}><span style={s.label}>取引先 *</span>
-            <input style={{ ...s.input, marginBottom: 4 }} placeholder="取引先を検索..." value={clientSearch} onChange={e => setClientSearch(e.target.value)} />
+            <input style={{ ...s.input, marginBottom: 4 }} placeholder="取引先を検索..." value={clientSearch} onChange={e => {
+              const q = e.target.value;
+              setClientSearch(q);
+              // 検索で今の取引先がリストから消えたら選択を外す。外さないと画面は「選択してください」なのに、
+              // 中身はコピー元の取引先のまま保存される（コピーして宛先を変えたつもりが変わらない）
+              const cur = clients.find(c => c.id === form.clientId);
+              if (q && cur && !matchSearch(q, cur.name, cur.kana, cur.code)) setF("clientId", "");
+            }} />
             <select style={s.select} value={form.clientId} onChange={e => {
               const cid = e.target.value;
               const cl = clients.find(c => c.id === cid);
               setF("clientId", cid);
-              if (cl?.divisionId) setF("divisionId", cl.divisionId);
+              // コピー・編集で取引先を選び直したら、事業部も新しい取引先のものにする（コピー元の事業部＝差出人が残らないように）
+              if (editing && cid) setF("divisionId", cl?.divisionId || "");
+              else if (cl?.divisionId) setF("divisionId", cl.divisionId);
             }}>
               <option value="">選択してください</option>
               {filteredClients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -1145,7 +1154,9 @@ function QuotationForm({ clients, products, quotations, clientPrices, divisions,
               const cid = e.target.value;
               const cl = clients.find(c => c.id === cid);
               setF("clientId", cid);
-              if (cl?.divisionId) setF("divisionId", cl.divisionId);
+              // コピー・編集で取引先を選び直したら、事業部も新しい取引先のものにする（コピー元の事業部＝差出人が残らないように）
+              if (editing && cid) setF("divisionId", cl?.divisionId || "");
+              else if (cl?.divisionId) setF("divisionId", cl.divisionId);
             }}>
               <option value="">選択してください</option>
               {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
