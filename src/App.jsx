@@ -961,7 +961,19 @@ function DeliveryForm({ clients, products, deliveries, clientPrices, divisions, 
     const autoInv = isImmediate && !isEdit;
     const data = { ...form, docNo: (isEdit && editing.docNo) || await nextDocNo("NO", deliveries), status: (isEdit && editing.status) || (autoInv ? "invoiced" : "unissued"), subtotal: sub, tax, total: grandTotal, updatedAt: serverTimestamp() };
     if (isEdit) {
-      await updateDoc(doc(db, "deliveries", editing.id), data);
+      try {
+        await runTransaction(db, async (tx) => {
+          const ref = doc(db, "deliveries", editing.id);
+          const snap = await tx.get(ref);
+          if (!snap.exists()) throw new Error("この納品書は削除されています。");
+          const cur = snap.data();
+          if ((cur.status || "unissued") !== (editing.status || "unissued") || (cur.invoiceId || "") !== (editing.invoiceId || ""))
+            throw new Error("この画面を開いているあいだに、納品書の状態（請求済み・承認待ちなど）が変わりました。\n保存していません。画面を閉じて、開き直してから直してください。");
+          tx.update(ref, data);
+        });
+      } catch (e) {
+        return alert(e.message);
+      }
       // 紐づく請求書があれば連動更新
       // 伝票番号ではなく発行時に刻んだ invoiceId で引く（番号が重複していると別の取引先の請求書を書き換える）
       const linkedInvs = linkedInvoicesOf(editing, invoices);

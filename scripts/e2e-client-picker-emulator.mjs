@@ -55,6 +55,7 @@ async function seed() {
   await db.collection("clients").doc("C2").set(cl("新しい物産", ""));
   await db.collection("clients").doc("C3").set(cl("三番目工業", "DV2"));
   await db.collection("clients").doc("C4").set({ ...cl("請求済み商会", "DV1"), billingType: "immediate" });
+  await db.collection("clients").doc("C5").set(cl("締め待ち商店", ""));
   await db.collection("deliveries").doc("D1").set({
     docNo: "NO-209901-001", clientId: "C1", divisionId: "DV1", date: "2099-01-05",
     items: [{ name: "テスト品", qty: 1, unit: "個", price: 1000, taxRate: 10 }], subtotal: 1000, tax: 100, total: 1100,
@@ -72,6 +73,17 @@ async function seed() {
     deliveryRef: "NO-209901-002", deliveryRefs: ["NO-209901-002"], status: "unpaid", createdAt: ts(),
   });
   await db.collection("clientBalances").doc("C4").set({ clientId: "C4", currentBalance: 2200, prevBalance: 0, paidAmount: 0 });
+  // 画面を開いているあいだに状態が変わる納品書（D4: 未請求→請求済み／D5: 請求済み→請求取消しで未請求）
+  await db.collection("deliveries").doc("D4").set({
+    docNo: "NO-209901-004", clientId: "C5", divisionId: "", date: "2099-01-08",
+    items: [{ name: "締め待ち品", qty: 1, unit: "個", price: 3000, taxRate: 10 }], subtotal: 3000, tax: 300, total: 3300,
+    status: "unissued", notes: "", createdAt: ts(),
+  });
+  await db.collection("deliveries").doc("D5").set({
+    docNo: "NO-209901-005", clientId: "C4", divisionId: "DV1", date: "2099-01-09",
+    items: [{ name: "取消し品", qty: 1, unit: "個", price: 4000, taxRate: 10 }], subtotal: 4000, tax: 400, total: 4400,
+    status: "invoiced", invoiceId: "I5", notes: "", createdAt: ts(),
+  });
   // 削除済みの取引先（clients に無い）の納品書
   await db.collection("deliveries").doc("D3").set({
     docNo: "NO-209901-003", clientId: "CX_DELETED", divisionId: "", date: "2099-01-07",
@@ -193,6 +205,40 @@ const delsOf = async (clientId) => (await db.collection("deliveries").where("cli
   ok("取引先のリストを触れる", !(await clientSel.isDisabled()));
   await page.getByRole("button", { name: "キャンセル", exact: true }).click();
   await page.waitForTimeout(500);
+
+  console.log("\n[9] 開いているあいだに締めで請求済みになった納品書は、未請求に戻して保存しない（二重請求を防ぐ）");
+  const edit = async (no) => { await page.locator("tbody tr").filter({ hasText: no }).getByRole("button", { name: "編集", exact: true }).click(); await search.waitFor(); };
+  await edit("NO-209901-004");
+  await db.collection("deliveries").doc("D4").update({ status: "invoiced", invoiceId: "I4" });   // 別の画面で締め請求が発行された
+  await page.waitForTimeout(800);
+  await page.locator('input[type="number"]').nth(0).fill("5");
+  let nD9 = dialogs.length;
+  await save("更新");
+  const d4 = (await db.collection("deliveries").doc("D4").get()).data();
+  ok("「状態が変わりました。開き直して」で止まる", dialogs.slice(nD9).some(m => m.includes("納品書の状態") && m.includes("開き直して")), JSON.stringify(dialogs.slice(nD9)));
+  ok("請求済みのまま（未請求に戻らない）・金額も変わらない", d4.status === "invoiced" && d4.invoiceId === "I4" && d4.total === 3300, JSON.stringify([d4.status, d4.invoiceId, d4.total]));
+  await page.getByRole("button", { name: "キャンセル", exact: true }).click();
+  await page.waitForTimeout(500);
+
+  console.log("\n[10] 開いているあいだに請求を取り消された納品書は、請求済みに戻して保存しない（永久に請求されなくなるのを防ぐ）");
+  await edit("NO-209901-005");
+  await db.collection("deliveries").doc("D5").update({ status: "unissued", invoiceId: admin.firestore.FieldValue.delete() });   // 請求書を削除して未請求に戻った
+  await page.waitForTimeout(800);
+  nD9 = dialogs.length;
+  await save("更新");
+  const d5 = (await db.collection("deliveries").doc("D5").get()).data();
+  ok("「状態が変わりました」で止まる", dialogs.slice(nD9).some(m => m.includes("納品書の状態")), JSON.stringify(dialogs.slice(nD9)));
+  ok("未請求のまま（請求済みに戻らない）", d5.status === "unissued" && !d5.invoiceId, JSON.stringify([d5.status, d5.invoiceId]));
+  await page.getByRole("button", { name: "キャンセル", exact: true }).click();
+  await page.waitForTimeout(500);
+
+  console.log("\n[11] 開き直せば、これまでどおり直せる");
+  await edit("NO-209901-005");
+  await page.locator('input[type="number"]').nth(0).fill("2");
+  nD9 = dialogs.length;
+  await save("更新");
+  const d5b = (await db.collection("deliveries").doc("D5").get()).data();
+  ok("止まらずに保存できる", !dialogs.slice(nD9).some(m => m.includes("納品書の状態")) && d5b.total === 8800 && d5b.status === "unissued", JSON.stringify([d5b.total, d5b.status, dialogs.slice(nD9)]));
 
   const failAlerts = dialogs.filter(m => /失敗|エラー/.test(m));
   ok("エラーの通知が出ていない", failAlerts.length === 0, JSON.stringify(failAlerts));
